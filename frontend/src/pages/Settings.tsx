@@ -4,7 +4,8 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 
 import { getAskStatus } from '../api/ask';
 import type { AskStatus } from '../api/ask';
-import { errorMessages } from '../api/client';
+import { errorMessages, get } from '../api/client';
+import { useApiResource } from '../api/useResource';
 import { useLiveUpdates } from '../api/liveContext';
 import {
   getKeys,
@@ -114,6 +115,12 @@ const DEFAULTS: Record<string, string> = {
   'reviews.max_words.briefing': '220',
   'shadows.monthly_cost_cap_usd': '$5',
   'backtest.monthly_cost_cap_usd': '$20',
+  'ask.enabled': 'On',
+  'ask.model': 'claude-sonnet-5-5 · Anthropic',
+  'ask.monthly_cost_cap_usd': '$15',
+  'ask.max_cost_per_answer_usd': '$0.25',
+  'ask.keep_days': '90 days',
+  'ask.instructions': 'empty',
   'ask.max_context_tokens': '60000',
   'ask.max_tool_rounds': '8',
   'ask.max_tool_result_tokens': '6000',
@@ -141,6 +148,22 @@ const DEFAULTS: Record<string, string> = {
   'readiness.max_price_blocked_pct': '5%',
 };
 
+const WORD_LIMIT_PATHS = [
+  'reviews.max_words.weekly_summary',
+  'reviews.max_words.weekly_story',
+  'reviews.max_words.briefing',
+] as const;
+
+const ASK_LIMIT_PATHS = [
+  'ask.max_tool_rounds',
+  'ask.max_context_tokens',
+  'ask.max_tool_result_tokens',
+  'ask.max_output_tokens',
+  'ask.answer_timeout_seconds',
+  'ask.max_questions_per_minute',
+  'ask.max_notes',
+] as const;
+
 // field path -> unit suffix for "Changed from …" and the unsaved list
 const UNITS: Record<string, string> = {
   'execution.entry_limit_offset_pct': '%',
@@ -165,6 +188,10 @@ const UNITS: Record<string, string> = {
   'reviews.max_words.weekly_summary': ' words',
   'reviews.max_words.weekly_story': ' words',
   'reviews.max_words.briefing': ' words',
+  'ask.monthly_cost_cap_usd': '',
+  'ask.max_cost_per_answer_usd': '',
+  'ask.keep_days': ' days',
+  'ask.instructions': '',
   'ask.max_context_tokens': ' tokens',
   'ask.max_tool_rounds': ' rounds',
   'ask.max_tool_result_tokens': ' tokens',
@@ -272,18 +299,185 @@ const ADVANCED_PATHS = [
 // ---------------------------------------------------------------------------
 // small building blocks
 
-function AskSpendLine() {
+/** One row of the read-only model catalog (item 109, GET
+ * /api/settings/models — the ``models`` block in config). */
+interface ModelCatalogEntry {
+  id: string;
+  provider: string;
+  input: string | null;
+  cached_input: string | null;
+  cache_write: string | null;
+  output: string | null;
+  cutoff: string | null;
+  effort: string | null;
+  supports_temperature: boolean | null;
+  api: string | null;
+  timeout_seconds: number | null;
+  key_ok: boolean;
+  used_by: string[];
+}
+
+/** "Reviews (weekly)" → "weekly review", "Shadow 'F'" → "shadow F" —
+ * the catalog's used-by names in the design's wording. */
+function usedByLabel(what: string): string {
+  const review = what.match(/^Reviews \((\w+)\)$/);
+  if (review) {
+    return { weekly: 'weekly review', briefing: 'daily briefing', verdict: 'verdicts' }[
+      review[1]
+    ] ?? what.toLowerCase();
+  }
+  const shadow = what.match(/^Shadow '(.+)'$/);
+  if (shadow) return `shadow ${shadow[1]}`;
+  if (what === 'Live decisions') return 'live decisions';
+  return what;
+}
+
+function cutoffLabel(iso: string | null): string {
+  if (!iso) return '—';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const m = iso.match(/^(\d{4})-(\d{2})/);
+  return m ? `${months[Number(m[2]) - 1] ?? m[2]} ${m[1]}` : iso;
+}
+
+function priceLabel(v: string | null): string {
+  if (v == null) return '—';
+  const n = Number(v);
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(4)));
+}
+
+function samplingLabel(m: ModelCatalogEntry): string {
+  if (m.supports_temperature) return 'temperature';
+  if (m.effort) return `effort ${m.effort}`;
+  return 'no temperature';
+}
+
+/** The "Models" group at the end of Model and reviews (item 109,
+ * design/screens/Settings.dc.html): the config catalog, read-only —
+ * prices change in config, never here. */
+function ModelsCatalog() {
+  const res = useApiResource<{ models: ModelCatalogEntry[] }>(
+    (signal) => get<{ models: ModelCatalogEntry[] }>('/api/settings/models', signal),
+  );
+  const models = res.data?.models ?? [];
+  const th: CSSProperties = {
+    textAlign: 'left',
+    padding: '8px 10px',
+    fontSize: 'var(--sa-text-sm)',
+    fontWeight: 500,
+    color: 'var(--sa-text-muted)',
+    borderBottom: '1px solid var(--sa-border)',
+    whiteSpace: 'nowrap',
+  };
+  const td: CSSProperties = {
+    padding: '10px',
+    borderBottom: '1px solid var(--sa-border)',
+    fontSize: 'var(--sa-text-md)',
+    verticalAlign: 'top',
+  };
+  const numTd: CSSProperties = {
+    ...td,
+    fontFamily: 'var(--sa-font-mono)',
+    textAlign: 'right',
+    color: 'var(--sa-text-2)',
+    whiteSpace: 'nowrap',
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-3)', padding: '14px 0 18px' }}>
+      <p style={{ margin: 0, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.55, maxWidth: 720 }}>
+        The models block in config is the only list of models and prices (USD per million tokens).
+        It is read at start-up and not edited here: prices change rarely, and every call keeps the
+        cost it had. A model without a working key for its provider can't be chosen above.
+      </p>
+      {res.loading && !res.data ? (
+        <SkeletonText lines={4} />
+      ) : res.failure && !res.data ? (
+        <Banner
+          variant="warning"
+          actions={
+            <button type="button" onClick={res.reload} style={{ border: '1px solid var(--sa-border-strong)', background: 'var(--sa-raised)', color: 'var(--sa-text)', borderRadius: 'var(--sa-radius-sm)', padding: '4px 12px', cursor: 'pointer' }}>
+              Retry
+            </button>
+          }
+        >
+          The model catalog didn't load.
+        </Banner>
+      ) : (
+        <div style={{ overflowX: 'auto', minWidth: 0 }}>
+          <table className="ml-table" style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th scope="col" style={th}>Model · provider · used by</th>
+                <th scope="col" title="USD per million input tokens" style={th}>Input</th>
+                <th scope="col" title="USD per million cached input tokens; falls back to input" style={th}>Cached</th>
+                <th scope="col" title="Anthropic only: USD per million cache-creation tokens; falls back to input" style={th}>Cache write</th>
+                <th scope="col" title="USD per million output tokens, thinking included" style={th}>Output</th>
+                <th scope="col" title="Reliable knowledge cutoff, used by the backtest lookahead check" style={th}>Cutoff</th>
+                <th scope="col" title="OpenAI models take the temperature above unless the list says they don't; Claude models take an effort" style={th}>Sampling</th>
+                <th scope="col" style={th}>API</th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.map((m) => (
+                <tr key={m.id}>
+                  <td style={td} data-l="">
+                    <div style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text)' }}>
+                      {m.id}
+                      {!m.key_ok && (
+                        <span style={{ fontFamily: 'var(--sa-font-sans)', fontSize: 'var(--sa-text-xs)', color: 'var(--sa-warning-text)', marginLeft: 8 }}>
+                          needs the {providerLabel(m.provider)} key
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 4 }}>
+                      {providerLabel(m.provider)}
+                      {m.used_by.length > 0 && ` · ${m.used_by.map(usedByLabel).join(', ')}`}
+                    </div>
+                  </td>
+                  <td style={numTd} data-l="Input">{priceLabel(m.input)}</td>
+                  <td style={numTd} data-l="Cached">{priceLabel(m.cached_input)}</td>
+                  <td style={numTd} data-l="Cache write">{priceLabel(m.cache_write)}</td>
+                  <td style={numTd} data-l="Output">{priceLabel(m.output)}</td>
+                  <td style={{ ...td, fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-2)', whiteSpace: 'nowrap' }} data-l="Cutoff">
+                    {cutoffLabel(m.cutoff)}
+                  </td>
+                  <td style={{ ...td, color: 'var(--sa-text-2)', whiteSpace: 'nowrap' }} data-l="Sampling">
+                    {samplingLabel(m)}
+                  </td>
+                  <td style={{ ...td, fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-muted)' }} data-l="API">
+                    {m.api ?? 'chat'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p style={{ margin: 0, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.55 }}>
+        Timeouts per model: a model's own <code>timeout_seconds</code> in the models block wins; the rest
+        use the call timeout above.{' '}
+        <Link to="/insights#q6" style={{ color: 'var(--sa-text-2)', textDecoration: 'underline', textUnderlineOffset: 3 }}>
+          All model costs
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+/** This month's Ask spend, inline in the monthly-cap row's help
+ * (design/screens/Settings.dc.html). Renders nothing until the status
+ * loads or when Ask has spent nothing yet. */
+function AskMonthSpend() {
   const [status, setStatus] = useState<AskStatus | null>(null);
   useEffect(() => {
     getAskStatus().then(setStatus).catch(() => setStatus(null));
   }, []);
   if (!status?.spent_usd) return null;
   return (
-    <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', marginBottom: 4 }}>
-      This month: ${Number(status.spent_usd).toFixed(2)} of ${status.cap_usd}
+    <>
+      {' '}This month: ${Number(status.spent_usd).toFixed(2)} of ${Number(status.cap_usd ?? 0).toFixed(2)}
       {status.questions ? ` · ${status.questions} questions` : ''}
-      {status.avg_cost_usd ? ` · about $${Number(status.avg_cost_usd).toFixed(3)} each` : ''}
-    </div>
+      {status.avg_cost_usd ? ` · about $${Number(status.avg_cost_usd).toFixed(3)} each` : ''}.
+    </>
   );
 }
 
@@ -3094,13 +3288,13 @@ export default function Settings() {
           </>)}
 
           {currentId === 'model' && (<>
-          <Section id="model" title="Model and reviews" blurb="The model, its prompt and limits on calls and cost.">
+          <Section id="model" title="Model and reviews" blurb="The models, their prompts, limits on calls and the monthly cost caps. Groups: Decisions, Reviews, Ask the agent, Shadows and backtests, Models.">
             <h3 style={subHead}>Decisions</h3>
             {row('decision.model', {
               notes: ["decision.model"],
               id: 'model',
               label: 'Model',
-              help: 'Used for live decisions.',
+              help: "Live decisions, OpenAI or Anthropic. Models whose key is missing can't be chosen. Try a new model in a shadow first.",
               children: (
                 <select
                   id="model"
@@ -3131,7 +3325,7 @@ export default function Settings() {
               notes: ["decision.prompt"],
               id: 'prompt',
               label: 'Decision prompt',
-              help: `${decisionPromptDesc ? `${decisionPromptDesc} ` : ''}Prompts are never edited; a change is a new version.`,
+              help: `Prompts are never edited; a change is a new version. Every decision prompt is listed; a version a shadow is testing is marked.${decisionPromptDesc ? ` ${decisionPromptDesc}` : ''}`,
               defaultText: undefined,
               children: (
                 <select
@@ -3156,7 +3350,7 @@ export default function Settings() {
               notes: ["decision.temperature"],
               id: 'temp',
               label: 'Temperature',
-              help: 'Decisions use 0 so the same input gives the same answer. OpenAI models only — Claude models use their effort setting instead.',
+              help: 'OpenAI models only: 0, so the same input gives the same answer. Claude models take no temperature; they use the effort set per model in config.',
               children: (
                 <NumBox id="temp" value={s.decision.temperature} width={60} accent={'decision.temperature' in changed} invalid={!!fieldErrors['decision.temperature']} onChange={(v) => patch('decision', 'temperature', v)} />
               ),
@@ -3172,7 +3366,7 @@ export default function Settings() {
             {row('decision.call_timeout_seconds', {
               id: 'calltimeout',
               label: 'Model call timeout',
-              help: 'A call slower than this fails and the cycle moves on.',
+              help: 'A call with no answer by then is a timeout: skip or hold, never retried. A model in the list can set its own.',
               children: (
                 <NumBox id="calltimeout" value={s.decision.call_timeout_seconds ?? 30} unit="s" width={60} accent={'decision.call_timeout_seconds' in changed} invalid={!!fieldErrors['decision.call_timeout_seconds']} onChange={(v) => patch('decision', 'call_timeout_seconds', v)} />
               ),
@@ -3180,7 +3374,7 @@ export default function Settings() {
             {row('decision.max_output_tokens', {
               id: 'maxout',
               label: 'Max answer length',
-              help: 'Output tokens one decision call may write.',
+              help: 'Output tokens per decision call, thinking included. A longer answer is cut off and counts as invalid.',
               children: (
                 <NumBox id="maxout" value={s.decision.max_output_tokens ?? 2048} unit="tokens" width={70} accent={'decision.max_output_tokens' in changed} invalid={!!fieldErrors['decision.max_output_tokens']} onChange={(v) => patch('decision', 'max_output_tokens', v)} />
               ),
@@ -3205,10 +3399,10 @@ export default function Settings() {
                     label: taskLabels[task],
                     help:
                       task === 'weekly'
-                        ? 'Runs after the Friday close.'
+                        ? 'Saturday review of the week.'
                         : task === 'briefing'
-                          ? 'The text of the daily briefing.'
-                          : 'Scores closed decisions.',
+                          ? 'Trading days before the open.'
+                          : 'Scores decisions once enough sessions exist to judge them.',
                     children: (
                       <select
                         id={`rmodel-${task}`}
@@ -3240,10 +3434,10 @@ export default function Settings() {
                     label: promptLabels[task],
                     help:
                       task === 'weekly'
-                        ? 'The prompt the weekly review runs.'
+                        ? 'Prompts are never edited; a change is a new version. Only weekly prompts are listed.'
                         : task === 'briefing'
-                          ? 'The prompt the daily briefing runs.'
-                          : 'The prompt the verdicts run.',
+                          ? 'Only briefing prompts are listed.'
+                          : 'Only verdict prompts are listed. A change applies to drafts written after it; existing drafts keep theirs.',
                     children: (
                       <select
                         id={`rprompt-${task}`}
@@ -3267,6 +3461,41 @@ export default function Settings() {
                 </div>
               );
             })}
+            {row('reviews.temperature', {
+              id: 'rtemp',
+              label: 'Review temperature',
+              help: 'OpenAI models only, for all three review tasks. Claude models use their effort from the model list.',
+              children: (
+                <NumBox id="rtemp" value={s.reviews.temperature ?? 0.2} width={60} accent={'reviews.temperature' in changed} invalid={!!fieldErrors['reviews.temperature']} onChange={(v) => patch('reviews', 'temperature', v)} />
+              ),
+            })}
+            <details className="sa-adv" style={{ marginTop: 0 }}>
+              <summary style={{ cursor: 'pointer', minHeight: 44, display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--sa-text-sm)', fontWeight: 600, color: 'var(--sa-text-2)', listStyle: 'none' }}>
+                <span aria-hidden="true" className="sa-adv-chev" style={{ display: 'inline-block', transition: 'transform 150ms' }}>▸</span>
+                Word limits{' '}
+                <span style={{ fontWeight: 400, color: 'var(--sa-text-muted)' }}>
+                  {WORD_LIMIT_PATHS.filter((p) => p in changed).length > 0
+                    ? `${WORD_LIMIT_PATHS.filter((p) => p in changed).length} changed`
+                    : '3 settings, all at default'}
+                </span>
+              </summary>
+              {([
+                ['weekly_summary', 'Weekly summary', 'The short summary at the top of the weekly review.'],
+                ['weekly_story', 'Weekly story', 'The full story of the week. Longer answers are cut at a sentence.'],
+                ['briefing', 'Daily briefing', 'The briefing before the open.'],
+              ] as const).map(([task, label, help]) => (
+                <div key={task}>
+                  {row(`reviews.max_words.${task}`, {
+                    id: `rwords-${task}`,
+                    label,
+                    help,
+                    children: (
+                      <NumBox id={`rwords-${task}`} value={s.reviews.max_words?.[task] ?? ({ weekly_summary: 120, weekly_story: 350, briefing: 220 } as const)[task]} unit="words" width={70} accent={`reviews.max_words.${task}` in changed} invalid={!!fieldErrors[`reviews.max_words.${task}`]} onChange={(v) => patchReviewWords(task, v)} />
+                    ),
+                  })}
+                </div>
+              ))}
+            </details>
             {row('reviews.briefing_enabled', {
               id: 'brief',
               label: 'Daily briefing',
@@ -3275,44 +3504,30 @@ export default function Settings() {
                 <Switch id="brief" on={s.reviews.briefing_enabled} onChange={(v) => patch('reviews', 'briefing_enabled', v)} />
               ),
             })}
-            {row('reviews.temperature', {
-              id: 'rtemp',
-              label: 'Review temperature',
-              help: 'OpenAI models only; Claude models use their effort setting.',
-              children: (
-                <NumBox id="rtemp" value={s.reviews.temperature ?? 0.2} width={60} accent={'reviews.temperature' in changed} invalid={!!fieldErrors['reviews.temperature']} onChange={(v) => patch('reviews', 'temperature', v)} />
-              ),
-            })}
-            {([
-              ['weekly_summary', 'Weekly summary words', 120],
-              ['weekly_story', 'Weekly story words', 350],
-              ['briefing', 'Briefing words', 220],
-            ] as const).map(([task, label, fallback]) => (
-              <div key={task}>
-                {row(`reviews.max_words.${task}`, {
-                  id: `rwords-${task}`,
-                  label,
-                  help: 'The longest the review text may run.',
-                  children: (
-                    <NumBox id={`rwords-${task}`} value={s.reviews.max_words?.[task] ?? fallback} unit="words" width={70} accent={`reviews.max_words.${task}` in changed} invalid={!!fieldErrors[`reviews.max_words.${task}`]} onChange={(v) => patchReviewWords(task, v)} />
-                  ),
-                })}
-              </div>
-            ))}
             {row('reviews.monthly_cost_cap_usd', {
               id: 'rcap',
               label: 'Review cost cap',
-              help: `Separate from decisions.${data.reviews_spend_usd ? ` This month: $${Number(data.reviews_spend_usd).toFixed(2)} of $${s.reviews.monthly_cost_cap_usd}.` : ''} Over the cap, reviews use the plain template.`,
+              help: (
+                <>
+                  Separate from decisions.{data.reviews_spend_usd ? ` This month: $${Number(data.reviews_spend_usd).toFixed(2)} of $${s.reviews.monthly_cost_cap_usd}.` : ''} Over the cap, reviews use the plain template.{' '}
+                  <Link to="/insights#q6" style={{ color: 'var(--sa-text-2)', textDecoration: 'underline', textUnderlineOffset: 3 }}>All model costs</Link>
+                </>
+              ),
               children: (
                 <NumBox id="rcap" value={s.reviews.monthly_cost_cap_usd} unit="$ / month" width={60} accent={'reviews.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['reviews.monthly_cost_cap_usd']} onChange={(v) => patch('reviews', 'monthly_cost_cap_usd', v)} />
               ),
             })}
 
-            <h3 style={subHead}>Other model spend</h3>
+            <h3 style={subHead}>Shadows and backtests</h3>
             {row('shadows.monthly_cost_cap_usd', {
               id: 'shcap',
               label: 'Shadow cost cap',
-              help: 'Shadow strategies stop calling the model for the month over this.',
+              help: (
+                <>
+                  Model calls of LLM shadows. At the cap they pause until the 1st; rules-only shadows keep running.
+                  {data.shadows_spend_usd != null && ` This month: $${Number(data.shadows_spend_usd).toFixed(2)} of $${s.shadows?.monthly_cost_cap_usd ?? 5}.`}
+                </>
+              ),
               children: (
                 <NumBox id="shcap" value={s.shadows?.monthly_cost_cap_usd ?? 5} unit="$ / month" width={60} accent={'shadows.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['shadows.monthly_cost_cap_usd']} onChange={(v) => patch('shadows', 'monthly_cost_cap_usd', v)} />
               ),
@@ -3320,11 +3535,19 @@ export default function Settings() {
             {row('backtest.monthly_cost_cap_usd', {
               id: 'btcap',
               label: 'Backtest cost cap',
-              help: 'A run stops at this spend; the month’s runs share the cap.',
+              help: (
+                <>
+                  A backtest that would pass it is refused before it starts; a running one stops at it.
+                  {data.backtest_spend_usd != null && ` This month: $${Number(data.backtest_spend_usd).toFixed(2)} of $${s.backtest?.monthly_cost_cap_usd ?? 20}.`}
+                </>
+              ),
               children: (
                 <NumBox id="btcap" value={s.backtest?.monthly_cost_cap_usd ?? 20} unit="$ / month" width={60} accent={'backtest.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['backtest.monthly_cost_cap_usd']} onChange={(v) => patch('backtest', 'monthly_cost_cap_usd', v)} />
               ),
             })}
+
+            <h3 style={subHead}>Models</h3>
+            <ModelsCatalog />
           </Section>
           </>)}
 
@@ -3334,11 +3557,10 @@ export default function Settings() {
             title="Ask the agent"
             blurb="The read-only chat drawer: it answers from the app's own data and never changes anything. Its model and cost limits are separate from decisions."
           >
-            <AskSpendLine />
             {row('ask.enabled', {
               id: 'ask-on',
               label: 'Ask the agent',
-              help: 'When off, the Ask button stays but the composer is replaced by this notice.',
+              help: 'The chat drawer on every screen. Read-only: it looks things up and never changes anything.',
               children: (
                 <Switch id="ask-on" on={s.ask?.enabled ?? true} onChange={(v) => patch('ask', 'enabled', v)} />
               ),
@@ -3346,7 +3568,7 @@ export default function Settings() {
             {row('ask.model', {
               id: 'ask-model',
               label: 'Model',
-              help: 'Recommended: claude-sonnet-5-5 or gpt-6.1-sol. Budget: claude-haiku-5-5 or gpt-4.1-mini.',
+              help: 'Answers with several lookups per question, so it needs a model that is good with tools. Recommended: Claude Sonnet 5.5 or GPT-6.1 Sol (both $2 in, $10 out per million tokens; about $0.05–0.10 a question). Budget: Haiku 5.5 or GPT-4.1 mini.',
               children: (
                 <select
                   id="ask-model"
@@ -3378,7 +3600,11 @@ export default function Settings() {
             {row('ask.monthly_cost_cap_usd', {
               id: 'ask-cap',
               label: 'Monthly cost cap',
-              help: 'Over the cap, the composer is replaced by a notice until the 1st.',
+              help: (
+                <>
+                  Separate from decisions and reviews. <AskMonthSpend /> At the cap no new questions until the 1st; chats stay readable.
+                </>
+              ),
               children: (
                 <NumBox id="ask-cap" value={s.ask?.monthly_cost_cap_usd ?? 15} unit="$ / month" width={60} accent={'ask.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['ask.monthly_cost_cap_usd']} onChange={(v) => patch('ask', 'monthly_cost_cap_usd', v)} />
               ),
@@ -3386,79 +3612,54 @@ export default function Settings() {
             {row('ask.max_cost_per_answer_usd', {
               id: 'ask-anscap',
               label: 'Max cost per answer',
-              help: 'At the cap, the agent answers once more without looking anything else up.',
+              help: 'When an answer reaches this, the agent stops looking things up and answers with what it has, and says so.',
               children: (
-                <NumBox id="ask-anscap" value={s.ask?.max_cost_per_answer_usd ?? 0.25} unit="$ / answer" width={60} accent={'ask.max_cost_per_answer_usd' in changed} invalid={!!fieldErrors['ask.max_cost_per_answer_usd']} onChange={(v) => patch('ask', 'max_cost_per_answer_usd', v)} />
+                <NumBox id="ask-anscap" value={s.ask?.max_cost_per_answer_usd ?? 0.25} unit="$" width={60} accent={'ask.max_cost_per_answer_usd' in changed} invalid={!!fieldErrors['ask.max_cost_per_answer_usd']} onChange={(v) => patch('ask', 'max_cost_per_answer_usd', v)} />
               ),
             })}
+            <details className="sa-adv" style={{ marginTop: 0 }}>
+              <summary style={{ cursor: 'pointer', minHeight: 44, display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--sa-text-sm)', fontWeight: 600, color: 'var(--sa-text-2)', listStyle: 'none' }}>
+                <span aria-hidden="true" className="sa-adv-chev" style={{ display: 'inline-block', transition: 'transform 150ms' }}>▸</span>
+                Limits per answer{' '}
+                <span style={{ fontWeight: 400, color: 'var(--sa-text-muted)' }}>
+                  {ASK_LIMIT_PATHS.filter((p) => p in changed).length > 0
+                    ? `${ASK_LIMIT_PATHS.filter((p) => p in changed).length} changed`
+                    : '7 settings, all at default'}
+                </span>
+              </summary>
+              {([
+                ['max_tool_rounds', 'ask-rounds', 'Lookup rounds', 'Model calls per answer; each round can run several lookups. At the limit it answers with what it has.', 8, 'rounds', 60],
+                ['max_context_tokens', 'ask-ctx', 'Context', 'Input tokens the chat may grow to; older turns are summarised beyond it.', 60000, 'tokens', 70],
+                ['max_tool_result_tokens', 'ask-tooltok', 'One lookup result', 'A longer result is cut and the agent is told so.', 6000, 'tokens', 70],
+                ['max_output_tokens', 'ask-maxout', 'Answer length', 'Output tokens per call, thinking included.', 4096, 'tokens', 70],
+                ['answer_timeout_seconds', 'ask-timeout', 'Answer timeout', 'The whole answer, all rounds. Your question is kept; Retry asks again.', 90, 's', 60],
+                ['max_questions_per_minute', 'ask-rate', 'Questions per minute', 'More are refused with a wait time.', 10, 'per min', 60],
+                ['max_notes', 'ask-notes', 'Saved notes', 'At the limit, delete a note before saving another.', 100, 'notes', 60],
+              ] as const).map(([key, id, label, help, fallback, unit, width]) => (
+                <div key={key}>
+                  {row(`ask.${key}`, {
+                    id,
+                    label,
+                    help,
+                    children: (
+                      <NumBox id={id} value={s.ask?.[key] ?? fallback} unit={unit} width={width} accent={`ask.${key}` in changed} invalid={!!fieldErrors[`ask.${key}`]} onChange={(v) => patch('ask', key, v)} />
+                    ),
+                  })}
+                </div>
+              ))}
+            </details>
             {row('ask.keep_days', {
               id: 'ask-keep',
-              label: 'Chats kept for',
-              help: 'Older chats are deleted after the daily backup; notes keep their text.',
+              label: 'Keep chats for',
+              help: 'Older chats are deleted after the nightly backup. Saved notes are kept until you delete them.',
               children: (
                 <NumBox id="ask-keep" value={s.ask?.keep_days ?? 90} unit="days" width={60} accent={'ask.keep_days' in changed} invalid={!!fieldErrors['ask.keep_days']} onChange={(v) => patch('ask', 'keep_days', v)} />
-              ),
-            })}
-            {row('ask.max_context_tokens', {
-              id: 'ask-ctx',
-              label: 'Context tokens',
-              help: 'Old tool results drop first, then old turns.',
-              children: (
-                <NumBox id="ask-ctx" value={s.ask?.max_context_tokens ?? 60000} unit="tokens" width={70} accent={'ask.max_context_tokens' in changed} invalid={!!fieldErrors['ask.max_context_tokens']} onChange={(v) => patch('ask', 'max_context_tokens', v)} />
-              ),
-            })}
-            {row('ask.max_tool_rounds', {
-              id: 'ask-rounds',
-              label: 'Tool rounds',
-              help: 'How many times one answer may look something up.',
-              children: (
-                <NumBox id="ask-rounds" value={s.ask?.max_tool_rounds ?? 8} unit="rounds" width={60} accent={'ask.max_tool_rounds' in changed} invalid={!!fieldErrors['ask.max_tool_rounds']} onChange={(v) => patch('ask', 'max_tool_rounds', v)} />
-              ),
-            })}
-            {row('ask.max_tool_result_tokens', {
-              id: 'ask-tooltok',
-              label: 'Tool result tokens',
-              help: 'One tool result is cut to this many tokens.',
-              children: (
-                <NumBox id="ask-tooltok" value={s.ask?.max_tool_result_tokens ?? 6000} unit="tokens" width={70} accent={'ask.max_tool_result_tokens' in changed} invalid={!!fieldErrors['ask.max_tool_result_tokens']} onChange={(v) => patch('ask', 'max_tool_result_tokens', v)} />
-              ),
-            })}
-            {row('ask.answer_timeout_seconds', {
-              id: 'ask-timeout',
-              label: 'Answer timeout',
-              help: 'A slower answer is cut off and marked failed.',
-              children: (
-                <NumBox id="ask-timeout" value={s.ask?.answer_timeout_seconds ?? 90} unit="s" width={60} accent={'ask.answer_timeout_seconds' in changed} invalid={!!fieldErrors['ask.answer_timeout_seconds']} onChange={(v) => patch('ask', 'answer_timeout_seconds', v)} />
-              ),
-            })}
-            {row('ask.max_questions_per_minute', {
-              id: 'ask-rate',
-              label: 'Questions per minute',
-              help: 'Over the rate, the composer waits a minute.',
-              children: (
-                <NumBox id="ask-rate" value={s.ask?.max_questions_per_minute ?? 10} unit="/ min" width={60} accent={'ask.max_questions_per_minute' in changed} invalid={!!fieldErrors['ask.max_questions_per_minute']} onChange={(v) => patch('ask', 'max_questions_per_minute', v)} />
-              ),
-            })}
-            {row('ask.max_notes', {
-              id: 'ask-notes',
-              label: 'Notes kept',
-              help: 'The newest notes an answer may carry.',
-              children: (
-                <NumBox id="ask-notes" value={s.ask?.max_notes ?? 100} unit="notes" width={60} accent={'ask.max_notes' in changed} invalid={!!fieldErrors['ask.max_notes']} onChange={(v) => patch('ask', 'max_notes', v)} />
-              ),
-            })}
-            {row('ask.max_output_tokens', {
-              id: 'ask-maxout',
-              label: 'Max answer length',
-              help: 'Output tokens one answer may write.',
-              children: (
-                <NumBox id="ask-maxout" value={s.ask?.max_output_tokens ?? 4096} unit="tokens" width={70} accent={'ask.max_output_tokens' in changed} invalid={!!fieldErrors['ask.max_output_tokens']} onChange={(v) => patch('ask', 'max_output_tokens', v)} />
               ),
             })}
             <Row
               paths="ask.instructions"
               label="Standing instructions"
-              help="How the agent answers — never what it may do. At most 1,000 characters."
+              help="Added to every chat. The agent never writes these itself. At most 1,000 characters."
               changed={'ask.instructions' in changed}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
