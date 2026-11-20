@@ -2,3 +2,4 @@
 # backend/tests/test_ask.py planted a fake key for the secrets-scrub
 # test; the literal was renamed later but the old commit still scans.
 6cc51b7ac2aefaada42f72d98bc80bccc640dff9:backend/tests/test_ask.py:generic-api-key:170
+ed32034a96f57c5d7dcd4d7e53bd041dd78d4630:backend/app/api/routes.py:generic-api-key:2997

@@ -3,6 +3,7 @@ Insights model-costs endpoint, backtest model_usage and the new
 settings keys (docs/SPEC.md → Model costs, LLM call history → Storage,
 Settings screen → Every model setting has a control)."""
 
+from collections.abc import Iterator
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -138,7 +139,7 @@ def _seed_call(session: Any, **kw: Any) -> LlmCall:
 
 
 @pytest.fixture()
-def cost_fixture(client: TestClient) -> dict[str, Any]:
+def cost_fixture(client: TestClient) -> Iterator[dict[str, Any]]:
     """Calls for every purpose plus sessions and two backtests."""
     with get_session_maker()() as session:
         session.execute(delete(LlmCall))
@@ -366,7 +367,7 @@ class TestSettingsNewKeys:
 
         def direction(path: str, old: Any, new: Any) -> str:
             changes = classify(tree(**{path: old}), tree(**{path: new}))
-            return changes[0]["direction"]
+            return str(changes[0]["direction"])
 
         assert direction("ask.max_tool_rounds", 8, 12) == "looser"
         assert direction("ask.max_tool_rounds", 8, 4) == "tighter"
