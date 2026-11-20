@@ -1086,6 +1086,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config,
         file_fallback=pipeline.file_handler,
         on_warning_or_above=_on_warning_or_above,
+        clock=clock,
     )
     if index_handler is not None:
         pipeline.add_handler(index_handler)
