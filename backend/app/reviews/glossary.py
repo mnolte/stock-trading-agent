@@ -96,8 +96,8 @@ def glossary_for(facts: dict[str, Any], config: AppConfig) -> dict[str, str]:
             )
         if facts.get("return_usd") is not None or facts.get("return_pct") is not None:
             out["adjusted P&L"] = (
-                "The result after costs: the assumed slippage and "
-                "dividends are taken out."
+                "The result after costs: the assumed slippage is taken "
+                "out and dividends are added."
             )
         if (facts.get("won") or 0) + (facts.get("lost") or 0) > 0:
             out["win rate"] = "The share of closed trades that made money."

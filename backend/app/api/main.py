@@ -1320,6 +1320,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         calendar_store, market_data, sources, config, clock, vix_service,
         release_service, sync_runs,
     )
+    if config.env.mode != "simulated":
+        # Item 108: once, rewrite corporate actions fetched before stock
+        # dividends were parsed as their own type — from the oldest
+        # run's start through today + 90 days. The event flag makes it
+        # a no-op on every later boot; a failed fetch retries next
+        # start.
+        from app.data.corporate_repair import repair_corporate_actions_once
+
+        await repair_corporate_actions_once(
+            get_session_maker(), market_data, clock, config
+        )
     today = clock.now().astimezone(NY_TZ).date()
     # The sector ETFs join the history fill like the universe: the
     # cycle's 3-day top-up alone would never reach the 20-bar

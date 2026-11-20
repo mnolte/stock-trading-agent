@@ -8,6 +8,7 @@ equity curve with SPY, and breakdowns by regime and symbol.
 
 from __future__ import annotations
 
+import bisect
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -22,16 +23,29 @@ from app.db.models import (
     CorporateAction,
     Decision,
     EquitySnapshot,
+    Fill,
     Position,
 )
-from app.engine.trades import _dividends, _trade_r
+from app.engine.benchmark import spy_return as spy_total_return
+from app.engine.trades import _dividends, _trade_r, close_lookup
 from app.market.clock import NY_TZ
 
 
 def summarise(
-    sessions: sessionmaker[Session], *, config: AppConfig, equity: Decimal
+    sessions: sessionmaker[Session],
+    *,
+    config: AppConfig,
+    equity: Decimal,
+    slippage_pct: Decimal | None = None,
 ) -> dict[str, Any]:
     """One strategy's metrics over its own run database."""
+    slip_pct = (
+        slippage_pct
+        if slippage_pct is not None
+        else config.get_decimal(
+            "performance", "slippage_pct_per_side", default=Decimal("0.05")
+        )
+    )
     with sessions() as session:
         snaps = session.execute(
             select(EquitySnapshot).order_by(EquitySnapshot.time)
@@ -44,7 +58,6 @@ def summarise(
             for d, v in sorted(curve.items())
         ]
         final_equity = snaps[-1].equity if snaps else equity
-        ret_pct = (final_equity - equity) / equity * 100 if equity else Decimal(0)
 
         spy = _spy_curve(session)
         spy_ret: Decimal | None = None
@@ -56,14 +69,47 @@ def summarise(
             if spy_first:
                 spy_last = spy_map.get(points[-1]["date"])
                 if spy_last:
-                    spy_ret = (spy_last - spy_first) / spy_first * 100
+                    # SPY's total return over the run: price plus its
+                    # dividends (item 108), like live's benchmark.
+                    spy_ret = spy_total_return(
+                        session,
+                        day0,
+                        date.fromisoformat(points[-1]["date"]),
+                        spy_first,
+                        spy_last,
+                    )
+                # Buy-and-hold, dividends not reinvested: each point's
+                # value is the price plus the dividends with their
+                # ex-date after day0 and on or before that day.
+                spy_actions = [
+                    (a.date.date(), a.ratio_or_amount)
+                    for a in session.execute(
+                        select(CorporateAction).where(
+                            CorporateAction.symbol == "SPY",
+                            CorporateAction.action_type == "dividend",
+                        )
+                    ).scalars()
+                    if a.ratio_or_amount is not None
+                ]
+                spy_actions.sort()
+                ex_dates = [d for d, _ in spy_actions]
+
+                def _spy_value(day: str) -> Decimal:
+                    d = date.fromisoformat(day)
+                    cum = Decimal(0)
+                    for _ex, amount in spy_actions[
+                        bisect.bisect_right(ex_dates, day0) : bisect.bisect_right(
+                            ex_dates, d
+                        )
+                    ]:
+                        cum += amount
+                    return spy_map.get(day, spy_first) + cum
+
                 spy_points = [
                     {
                         "date": p["date"],
                         "equity": float(
-                            equity
-                            * spy_map.get(p["date"], spy_first)
-                            / spy_first
+                            equity * _spy_value(p["date"]) / spy_first
                         ),
                     }
                     for p in points
@@ -72,11 +118,16 @@ def summarise(
         closed = session.execute(
             select(Position).where(Position.closed_at.is_not(None))
         ).scalars().all()
+        all_positions = session.execute(select(Position)).scalars().all()
         actions = session.execute(
             select(CorporateAction).where(
-                CorporateAction.action_type == "dividend"
+                CorporateAction.action_type.in_(("dividend", "stock_dividend"))
             )
         ).scalars().all()
+        close_before = close_lookup(session)
+        last_day = (
+            date.fromisoformat(points[-1]["date"]) if points else None
+        )
 
         def _adj(p: Position) -> Decimal:
             """Slippage-adjusted pnl plus dividends — the same adjusted
@@ -89,6 +140,7 @@ def summarise(
                 _day(p.opened_at),
                 _day(p.closed_at) if p.closed_at else _day(p.opened_at),
                 p.qty,
+                close_before=close_before,
             )
 
         wins = [p for p in closed if _adj(p) > 0]
@@ -114,6 +166,41 @@ def summarise(
             return _trade_r(p, stop)
 
         rs = [r for p in closed if (r := _r(p)) is not None]
+        # The run's return is adjusted like live's (item 108): the
+        # fake-broker equity delta minus the slippage on its fills plus
+        # the dividends its positions were entitled to.
+        slip_total = sum(
+            (
+                qty * price * slip_pct / 100
+                for qty, price in session.execute(
+                    select(Fill.qty, Fill.price)
+                ).all()
+            ),
+            Decimal(0),
+        )
+        div_total = Decimal(0)
+        for p in all_positions:
+            hold_end = (
+                _day(p.closed_at)
+                if p.closed_at is not None
+                else last_day
+            )
+            if hold_end is None:
+                continue
+            div_total += _dividends(
+                actions,
+                p.symbol,
+                _day(p.opened_at),
+                hold_end,
+                p.qty,
+                close_before=close_before,
+            )
+        adjusted_total = (
+            final_equity - equity - slip_total + div_total
+        )
+        ret_pct = (
+            adjusted_total / equity * 100 if equity else Decimal(0)
+        )
         max_dd = _max_drawdown(points, float(equity))
         decisions = session.execute(
             select(func.count(Decision.id))

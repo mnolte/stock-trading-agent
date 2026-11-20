@@ -6,7 +6,10 @@ import { fmtDayMonthIn } from '../format';
 export interface EquityCurvePoint {
   /** Session date in New York, YYYY-MM-DD. */
   date: string;
+  /** Adjusted equity — the drawn agent line (item 108). */
   equity: number;
+  /** Raw paper equity for the hover, when it differs. */
+  raw?: number | null;
   benchmark: number | null;
 }
 
@@ -75,6 +78,14 @@ export function EquityCurveChart({
   const host = useRef<HTMLDivElement>(null);
   const [marks, setMarks] = useState<ExitMark[]>([]);
   const [band, setBand] = useState<{ left: number; width: number; bottom: number } | null>(null);
+  const [hover, setHover] = useState<{
+    x: number;
+    y: number;
+    date: string;
+    equity: number;
+    raw: number | null;
+    benchmark: number | null;
+  } | null>(null);
 
   useEffect(() => {
     const el = host.current;
@@ -133,6 +144,35 @@ export function EquityCurveChart({
     });
     equity.setData(points.map((p) => ({ time: p.date, value: p.equity })));
 
+    // Item 108: hovering a point shows the adjusted equity on the line
+    // and the raw paper equity underneath.
+    const onCrosshair = (param: {
+      point?: { x?: number; y?: number };
+      time?: unknown;
+    }) => {
+      const x = param.point?.x;
+      const t = param.time;
+      if (x == null || t == null) {
+        setHover(null);
+        return;
+      }
+      const day = businessDay(t as Time);
+      const p = points.find((q) => q.date === day);
+      if (!p) {
+        setHover(null);
+        return;
+      }
+      setHover({
+        x,
+        y: param.point?.y ?? 0,
+        date: day,
+        equity: p.equity,
+        raw: p.raw ?? null,
+        benchmark: p.benchmark,
+      });
+    };
+    chart.subscribeCrosshairMove(onCrosshair);
+
     const place = () => {
       const ts = chart.timeScale();
       const byDate = new Map(points.map((p) => [p.date, p]));
@@ -179,6 +219,7 @@ export function EquityCurveChart({
     chart.timeScale().subscribeVisibleLogicalRangeChange(place);
     return () => {
       cancelAnimationFrame(raf);
+      chart.unsubscribeCrosshairMove(onCrosshair);
       chart.remove();
     };
   }, [points, currency, exits, drawdown]);
@@ -230,6 +271,45 @@ export function EquityCurveChart({
             }}
           />
         ))}
+        {hover && (
+          <div
+            data-testid="equity-hover"
+            style={{
+              position: 'absolute',
+              left: Math.min(hover.x + 12, 480),
+              top: Math.max(hover.y - 64, 4),
+              padding: '6px 8px',
+              background: 'var(--sa-surface, #161B22)',
+              border: '1px solid var(--sa-border, #2A323D)',
+              borderRadius: 6,
+              fontSize: 11,
+              color: TEXT,
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <div>{fmtDayMonthIn(hover.date)}</div>
+            <div>
+              Adjusted{' '}
+              <span style={{ color: 'var(--sa-text-1, #E6EAF0)' }}>
+                {`${currency === 'EUR' ? '€' : '$'}${hover.equity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              </span>
+            </div>
+            {hover.raw !== null && hover.raw !== hover.equity && (
+              <div>
+                Raw{' '}
+                <span style={{ color: 'var(--sa-text-2, #B6BFC9)' }}>
+                  {`${currency === 'EUR' ? '€' : '$'}${hover.raw.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                </span>
+              </div>
+            )}
+            {hover.benchmark !== null && (
+              <div>
+                {`Benchmark ${`${currency === 'EUR' ? '€' : '$'}${hover.benchmark.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}`}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

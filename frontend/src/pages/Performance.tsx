@@ -342,15 +342,23 @@ export default function Performance() {
     if (!run || !curve) return [];
     const start = Number(run.starting_equity);
     const out: EquityCurvePoint[] = [
-      { date: curve.start_label, equity: start, benchmark: start },
+      { date: curve.start_label, equity: start, raw: start, benchmark: start },
     ];
     let fx = 1;
     for (const p of curve.points) {
       if (p.eur_usd !== null) fx = Number(p.eur_usd);
       const divisor = chartCurrency === 'EUR' ? fx : 1;
+      const raw = Number(p.equity);
+      const adjusted =
+        p.adjusted !== null && p.adjusted !== undefined
+          ? Number(p.adjusted)
+          : raw;
       const point: EquityCurvePoint = {
         date: p.date,
-        equity: Number(p.equity) / divisor,
+        // The drawn line is the adjusted equity (item 108); the raw
+        // paper equity stays on the point for the hover.
+        equity: adjusted / divisor,
+        raw: raw / divisor,
         benchmark: p.benchmark === null ? null : Number(p.benchmark) / divisor,
       };
       // A snapshot on the run's start day replaces the synthetic start point
@@ -659,7 +667,7 @@ export default function Performance() {
             />
             <StatCard
               label={
-                <StatTip title="Agent return minus the return of buying SPY on the run's first day and holding it.">
+                <StatTip title="The adjusted return minus SPY's total return (price plus dividends) over the same days. Hover shows the price-only comparison.">
                   vs SPY hold
                 </StatTip>
               }
@@ -670,7 +678,11 @@ export default function Performance() {
                   plain={vsSpyPlain}
                   small={
                     summary.spy_return_pct !== null
-                      ? `SPY ${signedPct(summary.spy_return_pct)} over the same days`
+                      ? `SPY ${signedPct(summary.spy_return_pct)} with dividends over the same days` +
+                        (summary.vs_spy_raw_pct != null &&
+                        Number(summary.vs_spy_raw_pct) !== vsSpy
+                          ? ` · price-only ${signedPct(summary.vs_spy_raw_pct)}`
+                          : '')
                       : 'no SPY baseline yet'
                   }
                 />
@@ -829,7 +841,8 @@ export default function Performance() {
                   </span>
                 </div>
                 <div style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>
-                  {curve.benchmark} price only, dividends excluded
+                  {curve.benchmark} with dividends, like the agent’s adjusted
+                  equity — hover a point for the raw paper equity
                 </div>
               </Card>
             </>

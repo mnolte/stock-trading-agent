@@ -547,6 +547,15 @@ The layout must also work at phone width, so the VPS version can be checked from
 - **Money next to percentages.** Every "% of equity" setting shows its dollar amount at today's equity beside the control ("= $40.74"), from the same equity and function the risk gates use, updated as the value is typed.
 - **What these limits mean today.** Risk limits opens with three plain sentences computed from the values on screen, unsaved changes included: what a stopped-out trade loses (and after the losing-streak halving); whether the open-risk budget or the position count limits first (positions × risk per trade against total open risk); where new entries stop for the day and where the kill switch turns on, in dollars.
 - **Two-value settings are labelled** per field (shock brake: "1h bar" and "since the open"), not "1.5 to 2.5".
+- **Every model setting has a control** (item 109, decided 20 Nov). Settings → Model and reviews shows every key in config that sets a model, a prompt or a model limit, in five groups:
+  - **Decisions:** model, prompt, temperature, max model calls per cycle, and new: call timeout (`decision.call_timeout_seconds`, 30, 5–120 s) and max answer length (`decision.max_output_tokens`, 2,048, 256–16,384).
+  - **Reviews:** a model and a prompt per task, and new: review temperature (`reviews.temperature`, 0.2, 0–2; OpenAI models only) and, behind "Word limits", `reviews.max_words.weekly_summary` (120, 40–400), `weekly_story` (350, 100–1,000) and `briefing` (220, 60–600); then the daily briefing switch and the review cost cap.
+  - **Ask the agent:** as today, and new, behind "Limits per answer": `ask.max_tool_rounds` (8, 1–20), `max_context_tokens` (60,000, 8,000–200,000), `max_tool_result_tokens` (6,000, 500–20,000), `max_output_tokens` (4,096, 256–16,384), `answer_timeout_seconds` (90, 15–300), `max_questions_per_minute` (10, 1–60), `max_notes` (100, 10–1,000).
+  - **Shadows and backtests** (new): `shadows.monthly_cost_cap_usd` (5, 0–100) and `backtest.monthly_cost_cap_usd` (20, 0–500), each with this month's use.
+  - **Models** (new, read-only): every entry of the `models` block with provider, what uses it, prices per million tokens (input, cached, cache write, output), cutoff, sampling (temperature, no temperature, or the effort) and API, and per-model timeouts when set. It says the list is edited in config only.
+  - Every picker lists every model in the list, and every prompt select every version of its task in the manifest. The defaults shown are the config defaults.
+  - Raising a cost cap, a call or token limit, a timeout or the questions per minute is **looser** (asks once more); lowering is tighter. A word limit and the temperature have no direction.
+  - Each cost cap row shows this month's use and links to Insights → Model costs.
 - **Advanced settings folded.** Trading → Prices and timeouts sits behind "Advanced · prices and timeouts", closed by default, with "n settings, all at default" or "n changed"; Find a setting and Changed from default open it.
 - **Strategy overrides shown.** A strategy-overridable setting that a shadow overrides says so in its row ("Shadow A uses 45–65"), linking to Strategies. A changed value is highlighted with "Changed from …" and Reset, and the section list shows how many changes each section has. A bar at the bottom lists the unsaved changes (old → new), asks for a reason (required, shown in History) and has Discard and "Save as v<n>". Each change to a risk limit, brake, entry rule or decision gate is tagged **tighter** (lowers what the agent can lose or how often it enters) or **looser**, in amber; a save with a looser change asks once more, naming them ("Raises risk per trade 0.5 → 0.6%. Save?"). Which direction is tighter is fixed per setting in code. Values are checked as they are typed against the allowed ranges (for example RSI from must be below RSI to); Save is disabled while one is invalid. Leaving the page with unsaved changes asks first. In Notifications → Email, "Test and save" is the main action and "Send test" the secondary one. Keys are not part of this flow: they are saved per key, straight away (see API keys).
 
@@ -997,7 +1006,7 @@ A size reduced by a gate is not a warning; the model's action was kept.
 
 **Storage.** A new `llm_calls` table, one row per call:
 - What and where: sent at, New York session date, source (live, shadow, review, ask), strategy (shadows), kind (decision, briefing, weekly, verdict), the linked decision, shadow decision or review, cycle, symbol, context.
-- How: model, temperature, prompt version and hash, tokens in and out, cost and its source, latency in ms, final action.
+- How: model, temperature, prompt version and hash, tokens in and out, cost and its source, latency in ms, final action. From item 109 also `tokens_cached_in` (input read from the provider's prompt cache), `tokens_cache_write_in` (Anthropic cache creation) and `cache_saved` (money, the saving at the prices of that call, see Insights → Model costs); null on older rows, shown as "not recorded". The call details show them next to the tokens, and the CSV export gets the three columns.
 - Result: outcome, reasons JSON, error type, HTTP status, error message, provider and provider request id, raw response text; from item 074 `attention` (none, watch, act; see Does it need me?).
 - The row is written in the same transaction as the linked row, after the call has returned (hard rule 13). Error messages go through the same key scrubbing as logs; request headers are never stored.
 - The prompt is not duplicated. The system part is rebuilt from the versioned prompt file; if its hash differs from the stored hash, the screen says so instead of showing the text. The user part comes from the linked row's input snapshot (decisions, shadows) or facts JSON (reviews).
@@ -1449,6 +1458,7 @@ Next to each step is what was lost and why: rules, call cap, price checks, model
 3. **Where are trades lost?** "Where trades come from" (the funnel), "What each filter removed" and "Skipped setups".
 4. **Which conditions work?** Slices.
 5. **What do confidence, fills and nights cost?** Calibration, Execution, and Overnight and in session.
+6. **What do the models cost?** (item 109) Every model call of the whole app, with cached prompts: see Model costs below.
 
 - **Answer sentences** come from fixed templates over the snapshot (no model) and are stored with it (`answers`). For question 1: "Not shown yet" while the 90% range includes 0; "Probably, but not proven yet" when its low end is above 0 but under 0.1R; "Yes" from 0.1R. These are wording thresholds, not trading rules.
 - **Answers, not dashes.** A number that needs more trades says so instead of "—": "needs 10 closed trades · 4 so far". A card whose numbers all need more trades shows that one line and its definition, not a table of dashes.
@@ -1456,9 +1466,21 @@ Next to each step is what was lost and why: rules, call cap, price checks, model
 - **Slices.** The dimension picker is one select with groups instead of 22 chips: Timing (entry cycle, weekday, sessions held), Market (regime, SPY that day, VIX level, VIX change, breadth, release next morning), Stock (sector, symbol, sector rank, stock vs sector, days to earnings, opening gap, entry vs VWAP, pullback depth, strength vs SPY, volatility), Model (confidence, stop and target basis, prompt and model). The chosen dimension is in the URL (`?dim=`). On a phone the table scrolls inside its card.
 - **No internal names.** Item numbers and code names don't appear in the screen's text ("(item 068)" and `rs_vs_sector_pct` stay in the spec). Dates follow the date rule ("14 Oct", never "2026-10-14").
 - **The 15:46 row.** Since item 071 the 15:46 cycle enters like the others. Its slice says "entries from 11 Nov" until it has 10 trades, instead of the rule text.
-- **On this page.** Under the filters, chips jump to the five questions.
+- **On this page.** Under the filters, chips jump to the six questions.
 - **The funnel says what was kept.** Each step shows the share of the step before that it kept ("14% kept") before what was lost. On a phone the step's name and count share a line and the bar and note sit under them.
 - **Column order.** Slices: the slice, Avg R, range, trades, win rate, total R, skips, sample. What each filter removed: the filter, R if taken, removed, target first, stop first, neither, status; a filter with too few decided touches says "needs 100" in the R column and leaves the shares empty.
+
+**Model costs** (item 109, decided 20 Nov). Section 6 of Insights shows what every model call cost and how often each model is called, for the whole app. Marc asked for it on 20 Nov: until now costs were spread over Settings, the inspector summary, Backtest and the weekly review.
+
+- **Scope.** Every call in `llm_calls` (live decisions, shadows, the weekly review, the daily briefing, verdicts, Ask) plus backtest runs. Not tied to the strategy and period toggles at the top of the page; it has its own period toggle: This month (default; the caps are monthly), Last month, 3 months, All time. Months are calendar months in New York, as the caps are.
+- **Computed on request,** not in the nightly snapshot: one grouped query over `llm_calls` (indexes on (source, sent at) exist) and one over `backtests`. `GET /api/insights/model-costs?period=` answers within 300 ms on the 100,000-call fixture.
+- **By purpose.** One row per purpose, in this order: Live decisions, Shadows, Weekly review, Daily briefing, Verdicts, Ask, Backtests, and Total. Columns: the purpose with its model or models and a short note (shadows name their strategies; Ask shows questions and cost per question; backtests name their runs and the answers reused from the answer cache, which cost nothing); Calls; Per session (calls ÷ New York sessions in the period; "—" for backtests, which run per run; Total leaves backtests out); Input (all input tokens); Cached (cached reads and their share of input); Cache write (Anthropic cache creation; "—" for none); Output (thinking included); Cost; Cache saved; Monthly cap (a bar with "$3.54 of $5 · 71%"; amber from 80%; the review cap is shown once, on the weekly review row, as it covers all three review tasks; live decisions say "no monthly cap · at most 10 calls a cycle" from `decision.max_calls_per_cycle`). Clicking a purpose opens the LLM inspector with that source and period (Backtests opens the Backtest screen).
+- **Cache saved** = cached tokens × (input price − cached price) − cache-write tokens × (cache-write price − input price), at the prices stored with each call. It can be negative for a model whose cache writes are not read back; then it shows in amber.
+- **By model.** One row per model used in the period, by cost: the model, its provider and what used it, its prices per million tokens from the `models` block (input, cached, cache write, output), Calls, Input, Cached, Cache write, Output, Cost and Per call (cost ÷ calls).
+- **Cost per session.** A stacked bar per New York session in the period (per week above 31 sessions): live, shadows, reviews and Ask. Backtests are left out and the card says so. Hovering a bar lists the four amounts.
+- **Answer sentence** (fixed template, no model): the total and the number of calls, the backtest share, live decisions per session, the purpose closest to its cap ("Shadows are the closest to their cap: $3.54 of $5"), and the share of input served from the cache with what it saved.
+- **Calls stored before item 109** have no cache split: they count as uncached in Cached and Cache saved, and the card's note says so. Their cost is the stored cost and is never recomputed.
+- **Links.** The Model cost per trade tile in section 1 links to this section ("all model costs"); each cost cap in Settings → Model and reviews links here too.
 
 Before 10 closed trades, sections 1, 2 and 4 show what they will hold and how many trades they need; the funnel, skips and execution show as normal.
 
@@ -1797,7 +1819,10 @@ Decisions (live and shadows), the weekly review, the daily briefing, verdicts, r
 - `cutoff`: the model's reliable knowledge cutoff, used by the backtest lookahead check;
 - for Anthropic models, `effort` (`low`, `medium` or `high`; default `low`);
 - optionally `timeout_seconds`, overriding `decision.call_timeout_seconds` for that model;
-- for OpenAI models, `supports_temperature` (default true). With false, no temperature is sent, as for Claude models.
+- for OpenAI models, `supports_temperature` (default true). With false, no temperature is sent, as for Claude models;
+- for OpenAI models, `api`: `chat` (default) or `responses`, the API the adapter calls (tool calls on gpt-6.1-sol need the Responses API).
+
+Settings → Model and reviews → Models shows the whole list read-only (item 109): it is edited in config only and read at start.
 
 Settings, the shadow dialog, backtests and replays only offer models from this list. `model_prices` and `backtest.model_cutoffs` are folded into it, and `reviews.model` becomes `reviews.models` (one per task); the old keys are read for one release with a warning.
 
@@ -1826,11 +1851,11 @@ Settings, the shadow dialog, backtests and replays only offer models from this l
 - **A backtest** with a strategy whose provider has no working key is refused before it starts.
 - **A failing key during the session** (for example revoked) behaves as today: calls fail as `api_error`, the "Data source or API key failing" notification fires, and decisions on that provider count as skip or hold.
 
-**Costs.** Calls count toward the same caps as today (decisions, shadows, reviews, backtests), priced from the model list.
+**Costs.** Calls count toward the same caps as today (decisions, shadows, reviews, backtests), priced from the model list. Insights → Model costs shows them all, per purpose and per model (item 109).
 
 **Prompt caching.** Every `complete()` call sends the system prompt as the cacheable prefix: Anthropic marks it with cache control (ephemeral), OpenAI's automatic prefix caching applies with no marker. Cached reads count at the model's `cached_input` and Anthropic cache writes at `cache_write`, each falling back to `input` — the same accounting `converse()` already uses for Ask. Only the system prompt is shared (snapshots differ per symbol), and a prompt below the provider's cache minimum simply isn't cached. Calls made before caching shipped keep their stored cost; costs are never rewritten.
 
-**Backtests.** The lookahead check uses the model's `cutoff`. Current Claude 5.5 models have a reliable knowledge cutoff of June 2026, so their backtests can only start on 1 July 2026; the backtest screen says so, as it does for any model.
+**Backtests.** A finished, stopped or cancelled run stores its model use in `summary.model_usage` (item 109): per model, calls, input, cached, cache-write and output tokens, cost, and answers reused from the answer cache. Insights → Model costs reads it. The lookahead check uses the model's `cutoff`. Current Claude 5.5 models have a reliable knowledge cutoff of June 2026, so their backtests can only start on 1 July 2026; the backtest screen says so, as it does for any model.
 
 **What is recorded.** `llm_calls` gets `provider` and `provider_request_id` (new Alembic revision); the existing OpenAI request id column stays for older rows and is copied into the new column by the migration. Decisions, reviews and strategy versions already store the model; the provider is derived from the model list.
 
@@ -2353,7 +2378,7 @@ A drawer opens on any screen with that screen as context, so "why was this block
   - A number that doesn't is shown with a dotted amber underline: "not found in the data".
   - Under the answer: "1 number not found in the data".
   - The answer is not blocked; the check makes guesses visible.
-- **Under each answer:** model, number of lookups, cost, "data as of" time, Copy, and a link to its model calls in the inspector.
+- **Under each answer:** model, number of lookups, cost, "data as of" time, Copy, and a link to its model calls in the inspector. From item 109 the meta line sits above three buttons: Copy, Save as note, Model calls. An answer with a number not found in the data starts the meta line with that warning and names the underlined number.
 
 **Memory.** Nothing is remembered silently. Two kinds of memory are written by Marc; the agent reads them but never writes, changes or deletes them.
 - **Standing instructions.**
@@ -2471,6 +2496,13 @@ A drawer opens on any screen with that screen as context, so "why was this block
 - `design/screens/AskDrawer.dc.html`: docked next to Positions, mid-conversation, with steps, a table, reference chips, the answer footer and a streaming answer with Stop.
 - `design/screens/AskStates.dc.html`: first open with suggestions, earlier chats, problems (a number not found, a failed answer, a stopped answer, the monthly cap), notes, and the phone layout with an answer that uses a note.
 - "Save as note" sits in each answer's footer. The Settings design has the Ask the agent group (`design/screens/Settings.dc.html`).
+- **Layout** (item 109, decided 20 Nov):
+  - The header is one line: the icon, "Ask the agent" with the chat's title under it (both end in an ellipsis), and three 36 px icon buttons: Earlier chats, New chat (+), Close.
+  - The context chip stays on one line, ends in an ellipsis and shows the full context on hover; its × is a 20 px button.
+  - The composer is one box: the question (grows from 2 to 6 lines, then scrolls), and under it this month's Ask budget left ("$13.16 of $15 left this month") and Send, or Stop while an answer streams. One hint line sits under the box: read-only, Enter sends, Shift+Enter starts a new line.
+  - An answer's blocks (paragraphs, table, chips, footer) are 12 px apart; messages 16 px.
+  - Notes end with their date and source, then Edit and Delete as buttons.
+  - While an answer streams and Marc has scrolled up, a "Jump to latest" button shows above the composer; the log doesn't pull him down.
 - The sidebar gets the Ask button under the app mark on every screen; the phone top bar gets an Ask button next to the menu. (The header first had it; moved 5 Nov, item 045.)
 
 ## Concurrent requests (item 078, planned)
