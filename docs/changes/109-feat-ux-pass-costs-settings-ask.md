@@ -6,7 +6,7 @@ status: building
 issue: 321
 kickoff: 109-feat-ux-pass-costs-settings-ask.md
 spec_prs: [322]
-build_prs: [327]
+build_prs: [327, 328]
 ---
 
 # 109 · feat · UX pass: model costs, model settings, Ask drawer, spacing
@@ -45,3 +45,11 @@ Answered by Marc on 20 Nov:
 - New `GET /api/insights/model-costs?period=` computes the Model costs payload on request: purposes in spec order, by-model rows with prices, cost per session without backtests, monthly-cap usage and the answer sentence.
 - Settings: every model-related key is editable — `decision.call_timeout_seconds`, `decision.max_output_tokens`, `reviews.temperature`, `reviews.max_words.*`, the seven `ask` limits, `shadows.monthly_cost_cap_usd`, `backtest.monthly_cost_cap_usd` — with directions, labels, confirm-on-raise for the model sections and matching controls (`settings-controls.json` plus the Settings rows the e2e control check requires). New read-only `GET /api/settings/models` returns the model catalog.
 - Kickoff moved to `docs/kickoffs/archive/`. Frontend (Insights card, Settings models table and new controls, Ask drawer, spacing) follows in PR B.
+
+## 2026-11-21 · build PR #328 (PR B — frontend)
+
+- **Insights question 6, "What do the models cost?"** (`frontend/src/pages/modelCosts.tsx`): the section fetches `/api/insights/model-costs` on request, keeps its period in `?costs=` (this month / last month / all time), and shows the answer sentence, the by-purpose table (calls, calls per session, input/cached/cache-write/output tokens, cost, cache saved, the monthly-cap bar), the by-model table with prices and cache savings, cost per session, period metadata, links into the inspector, and skeleton/error states.
+- **Settings** (`frontend/src/pages/Settings.tsx`): the read-only Models catalog (`GET /api/settings/models`) lists every configured model with provider, purposes, prices, cutoff, sampling, API and key status; review word limits fold into a `details.sa-adv` block; the review and shadow/backtest cap helps link to `/insights#q6`; the Ask section shows the monthly spend line (`spent_usd`/`cap_usd` from the settings payload) and folds the per-answer limits.
+- **Ask drawer** (`frontend/src/ask/`): one-line header with icon buttons, one-line context chip, a single composer box carrying the budget/cost line, `.sa-prose` on rendered answers (12 px between blocks), a compact footer action row, note edit buttons, and a "Jump to latest" control. Keyboard, focus, streaming, read-only and cap behaviour unchanged.
+- **Spacing**: shared `.sa-prose` rhythm applied to Ask answers, review stories, briefings and explained warnings (`StoryText`, `Inspector`); `.mc-table`/`.ml-table` responsive rules in `global.css`. New `frontend/e2e/109-spacing.e2e.ts` walks every screen at both viewports and fails on cramped non-table text or mobile overflow.
+- Screenshots spec `frontend/e2e/109-shots.e2e.ts` writes `docs/screenshots/109/` (Insights costs both periods, Settings model page with folds at 1440/1024/390, Reviews, Readiness, Backtests, Ask thread/notes/mid-answer/cap).
