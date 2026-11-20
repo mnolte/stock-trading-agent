@@ -135,6 +135,28 @@ button:not([disabled]):hover {
     align-items: flex-start;
   }
 }
+/* Dashboard two-card rows (item 107, design/screens/Main.dc.html): from
+ * 1200 px one shared 3 : 2 split with 20 px between the cards, each card
+ * at its own height; below 1200 px each card takes the full width. The
+ * !important wins over the cards' inline flex hints. */
+.sa-dash-pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--sa-space-5);
+}
+@media (min-width: 1200px) {
+  .sa-dash-pair {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    align-items: start;
+  }
+}
+@media (max-width: 1199px) {
+  .sa-dash-pair > * {
+    flex: 1 1 100% !important;
+  }
+}
 /* Phone layout below 760 px (item 073, design/screens/Main.dc.html). */
 @media (max-width: 760px) {
   /* Columns that need the width: hidden on a phone. */

@@ -70,10 +70,13 @@ export function Watchlist({
   res,
   selected,
   onSelect,
+  id,
 }: {
   res: Resource<WatchlistResponse>;
   selected: string | null;
   onSelect: (symbol: string) => void;
+  /** Anchor id for the "On this page" jump links (item 107). */
+  id?: string;
 }) {
   const rows = useMemo(() => res.data?.rows ?? [], [res.data]);
   const universeMode = res.data?.universe_mode ?? 'fixed';
@@ -116,11 +119,12 @@ export function Watchlist({
 
   return (
     <Card
+      id={id}
       label="Watchlist"
       ariaLabel="Watchlist"
       busy={res.loading}
       refreshing={res.refreshing}
-      style={{ gap: '14px' }}
+      style={{ gap: '14px', scrollMarginTop: 16 }}
       right={
         <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
           {screened

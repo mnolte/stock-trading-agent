@@ -26,7 +26,7 @@ function chipVariant(tone: ChipData['tone']) {
  * Today's briefing once its slot has passed, the previous one with its
  * date before that; "off" with a Settings link when briefings are off.
  */
-export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
+export function BriefingCard({ res, id }: { res: Resource<DashboardResponse>; id?: string }) {
   const briefing = res.data?.briefing ?? null;
   const card = briefing?.card ?? null;
   const enabled = briefing?.enabled ?? true;
@@ -34,11 +34,13 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
   const title = card ? `Daily briefing · ${card.today ? card.time : card.label}` : 'Daily briefing';
   return (
     <section
+      id={id}
       aria-label="Daily briefing"
       aria-busy={res.loading || res.refreshing || undefined}
       style={{
         position: res.refreshing ? 'relative' : undefined,
         flex: '999 1 460px',
+        scrollMarginTop: 16,
         minWidth: 0,
         background: 'var(--sa-panel)',
         border: '1px solid var(--sa-border)',

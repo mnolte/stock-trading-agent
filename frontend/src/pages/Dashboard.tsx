@@ -219,12 +219,13 @@ function Feed({ res }: { res: Resource<DashboardResponse> }) {
 
   return (
     <Card
+      id="today"
       label={title}
       ariaLabel={title}
       right={<Link to="/inspector">All model calls</Link>}
       busy={res.loading}
       refreshing={res.refreshing}
-      style={{ flex: 1, gap: '14px' }}
+      style={{ flex: 1, gap: '14px', scrollMarginTop: 16 }}
     >
       <CardBody
         res={res}
@@ -323,10 +324,11 @@ function LatestDecision({ res }: { res: Resource<DashboardResponse> }) {
   const title = compact && d !== null ? `Latest decision · ${d.symbol}` : 'Latest decision';
   return (
     <Card
+      id="decision"
       ariaLabel="Latest decision"
       busy={res.loading}
       refreshing={res.refreshing}
-      style={{ padding: '20px', gap: '16px' }}
+      style={{ padding: '20px', gap: '16px', scrollMarginTop: 16 }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
         <div
@@ -650,12 +652,13 @@ function OpenPositionsMini({
       : 'Open positions';
   return (
     <Card
+      id="positions"
       label={positionsLabel}
       ariaLabel={positionsLabel}
       right={<Link to="/positions">Positions & orders</Link>}
       busy={res.loading}
       refreshing={res.refreshing}
-      style={{ flex: '1 1 520px', gap: '14px' }}
+      style={{ flex: '1 1 520px', gap: '14px', scrollMarginTop: 16 }}
     >
       <CardBody
         res={res}
@@ -1493,16 +1496,7 @@ export default function Dashboard() {
       </section>
       )}
 
-      <div
-        className="sa-card-row"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'flex-start',
-          gap: 'var(--sa-space-5)',
-        }}
-      >
-        <span id="positions" style={{ display: 'block', height: 0, scrollMarginTop: '16px' }} />
+      <div className="sa-dash-pair">
         <OpenPositionsMini
           res={positionsRes}
           nextCycle={dashboard?.session.next_cycle ?? null}
@@ -1526,21 +1520,14 @@ export default function Dashboard() {
         />
       )}
 
-      <div
-        className="sa-card-row"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'flex-start',
-          gap: 'var(--sa-space-5)',
-        }}
-      >
-        <span id="chart" style={{ display: 'block', height: 0, scrollMarginTop: '16px' }} />
+      <div className="sa-dash-pair">
         <div style={{ flex: '999 1 600px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Card
+            id="chart"
             ariaLabel={chartSymbol ? `Chart for ${chartSymbol}` : 'Chart'}
             busy={chartRes.loading}
             refreshing={chartRes.refreshing}
+            style={{ scrollMarginTop: 16 }}
           >
             <div
               style={{
@@ -1683,36 +1670,25 @@ export default function Dashboard() {
             </div>
           </Card>
         </div>
-        <span id="decision" style={{ display: 'block', height: 0, scrollMarginTop: '16px' }} />
         <div style={{ flex: '1 1 340px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <LatestDecision res={dashboardRes} />
         </div>
       </div>
 
-      <div
-        className="sa-card-row"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'flex-start',
-          gap: 'var(--sa-space-5)',
-        }}
-      >
-        <span id="today" style={{ display: 'block', height: 0, scrollMarginTop: '16px' }} />
+      <div className="sa-dash-pair">
         <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Feed res={dashboardRes} />
         </div>
-        <span id="briefing" style={{ display: 'block', height: 0, scrollMarginTop: '16px' }} />
         <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <BriefingCard res={dashboardRes} />
+          <BriefingCard res={dashboardRes} id="briefing" />
         </div>
       </div>
 
-      <span id="watchlist" style={{ display: 'block', height: 0, scrollMarginTop: '16px' }} />
       <Watchlist
         res={watchlistRes}
         selected={chartSymbol}
         onSelect={pickSymbol}
+        id="watchlist"
       />
 
       <FindSymbolDialog
