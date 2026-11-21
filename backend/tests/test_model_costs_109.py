@@ -270,8 +270,10 @@ class TestModelCosts:
         assert by_id["gpt-4.1-mini"]["input"] == 0.40
         assert "backtest" in by_id["gpt-4.1-mini"]["purposes"]
         assert by_id["claude-haiku-5-5"]["cached_input"] == 0.01
-        # Cost per session: 2 sessions, buckets exclude backtests.
-        assert len(data["per_session"]) == 2
+        # Cost per session: item 112 gives every session a row — the
+        # two SPY sessions plus 11 Dec, which has Ask calls but no bar.
+        assert len(data["per_session"]) == 3
+        assert data["per_session_unit"] == "session"
         # Answer sentence exists and names the totals.
         assert "calls" in data["answer"]
 
