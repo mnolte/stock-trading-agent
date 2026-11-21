@@ -228,6 +228,8 @@ export function SessionChart({
                       fontSize: 'var(--sa-text-xs)',
                       color: isSel ? 'var(--sa-text)' : 'var(--sa-text-muted)',
                       whiteSpace: 'nowrap',
+                      alignSelf:
+                        i === 0 ? 'flex-start' : i === rows.length - 1 ? 'flex-end' : undefined,
                     }}
                   >
                     {showLabels[i] ? r.label : ''}
