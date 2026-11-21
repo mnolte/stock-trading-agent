@@ -6,6 +6,8 @@ import { Card } from '../components/Card';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { ErrorBanner } from '../components/cardState';
 import { SkeletonTable, SkeletonTiles } from '../components/skeletons';
+import { SessionChart } from './modelCostsChart';
+import type { SessionBucket, SessionSummary, SessionUnit } from './modelCostsFormat';
 
 /** Insights → "What do the models cost?" (item 109, docs/SPEC.md →
  * Model costs; design/screens/Insights.dc.html#q6). Whole-app spend,
@@ -58,20 +60,13 @@ interface ModelRow {
   per_call: string | null;
 }
 
-interface SessionRow {
-  key: string;
-  from: string;
-  live: string;
-  shadows: string;
-  reviews: string;
-  ask: string;
-}
-
 interface ModelCostsResponse {
   period: { name: string; label: string; from: string | null; to: string; sessions: number };
   purposes: PurposeRow[];
   models: ModelRow[];
-  per_session: SessionRow[];
+  per_session: SessionBucket[];
+  per_session_unit: SessionUnit;
+  per_session_summary: SessionSummary | null;
   answer: string;
 }
 
@@ -81,15 +76,6 @@ const COST_PERIODS: [string, string][] = [
   ['3_months', '3 months'],
   ['all', 'All time'],
 ];
-
-/** Stack colours from design/screens/Insights.dc.html (bottom → top:
- * live, shadows, reviews, Ask). */
-const STACK = [
-  { key: 'live', label: 'Live decisions', color: '#7FB8FF' },
-  { key: 'shadows', label: 'Shadows', color: '#B48CFF' },
-  { key: 'reviews', label: 'Reviews', color: '#3DD68C' },
-  { key: 'ask', label: 'Ask', color: '#F2B94B' },
-] as const;
 
 const PURPOSE_LABELS: Record<string, string> = {
   live: 'Live decisions',
@@ -249,69 +235,6 @@ function PricesLine({ row }: { row: ModelRow }) {
   );
 }
 
-function SessionChart({ rows, monthLabel }: { rows: SessionRow[]; monthLabel: string }) {
-  const totals = rows.map((r) =>
-    STACK.reduce((n, s) => n + Number((r as unknown as Record<string, string>)[s.key] ?? 0), 0),
-  );
-  const max = Math.max(...totals, 0.0001);
-  // Nice axis: round the top up to a readable step.
-  const rawTop = max * 1.15;
-  const step = rawTop > 1 ? 0.5 : rawTop > 0.2 ? 0.1 : rawTop > 0.05 ? 0.02 : 0.01;
-  const top = Math.ceil(rawTop / step) * step;
-  const H = 124;
-  const label = (key: string) =>
-    /^\d{4}-\d{2}-\d{2}$/.test(key) ? String(Number(key.slice(8))) : key.replace(/^\d{4}-W/, 'W');
-  return (
-    <div>
-      <div role="img" aria-label={`Model cost per session${monthLabel ? ` in ${monthLabel}` : ''}, stacked by purpose; highest $${top.toFixed(2)}`} style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: H, fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-xs)', color: 'var(--sa-text-muted)', textAlign: 'right', paddingRight: 4 }}>
-          <span>${top.toFixed(2)}</span>
-          <span>${(top / 2).toFixed(2)}</span>
-          <span>$0</span>
-        </div>
-        <div style={{ flex: '1 1 auto', display: 'flex', gap: 6, alignItems: 'flex-start', minWidth: 0 }}>
-          {rows.map((r, i) => {
-            const total = totals[i];
-            const parts = STACK.map((s) => ({
-              ...s,
-              cost: Number((r as unknown as Record<string, string>)[s.key] ?? 0),
-            })).filter((p) => p.cost > 0);
-            return (
-              <div
-                key={r.key}
-                title={`${label(r.key)} · ${fmtUsd(total.toFixed(4))} · ${parts.map((p) => `${p.label.toLowerCase()} ${fmtUsd(p.cost.toFixed(4))}`).join(' · ')}`}
-                style={{ flex: '1 1 0', minWidth: 14, display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'stretch' }}
-              >
-                <div style={{ height: H, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                  {total > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', borderRadius: '3px 3px 0 0', overflow: 'hidden' }}>
-                      {[...parts].reverse().map((p) => (
-                        <div key={p.key} style={{ height: Math.max(1, (p.cost / top) * H), background: p.color }} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-xs)', color: 'var(--sa-text-muted)', textAlign: 'center' }}>{label(r.key)}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 16px', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 10 }}>
-        {STACK.map((s) => (
-          <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 10, height: 10, background: s.color, borderRadius: 2 }} />
-            {s.label}
-          </span>
-        ))}
-      </div>
-      <p style={{ margin: '10px 0 0', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.55 }}>
-        Backtests run per run, not per session; they are in By purpose above.
-      </p>
-    </div>
-  );
-}
-
 export function ModelCostsSection() {
   const [searchParams, setSearchParams] = useSearchParams();
   const costs = searchParams.get('costs') ?? 'this_month';
@@ -328,6 +251,8 @@ export function ModelCostsSection() {
     next.set('costs', key);
     setSearchParams(next, { replace: true });
   };
+
+  const costPeriodLabel = COST_PERIODS.find(([k]) => k === period)?.[1] ?? 'This month';
 
   const periodMeta = data
     ? `${data.period.from ? `${data.period.from.slice(8)} ` : ''}${data.period.from ? monthName(data.period.from) + ' ' : ''}– ${data.period.to.slice(8)} ${monthName(data.period.to)} · ${data.period.sessions} session${data.period.sessions === 1 ? '' : 's'} · read from every stored call, as of ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
@@ -456,11 +381,10 @@ export function ModelCostsSection() {
             </p>
           </Card>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'flex-start', marginTop: 12 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)', marginTop: 12 }}>
             <Card
               label="By model"
               refreshing={res.refreshing}
-              style={{ flex: '999 1 640px' }}
               right="prices from the models block in config"
             >
               <div style={{ overflowX: 'auto', minWidth: 0 }}>
@@ -509,15 +433,19 @@ export function ModelCostsSection() {
             </Card>
 
             <Card
+              id="cost-per-session"
               label="Cost per session"
               refreshing={res.refreshing}
-              style={{ flex: '1 1 340px' }}
-              right={`${monthName(data.period.to)} · backtests not included`}
+              right={`${costPeriodLabel} · per ${data.per_session_unit} · backtests not included`}
             >
               {data.per_session.length === 0 ? (
                 <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>No model calls in this period.</div>
               ) : (
-                <SessionChart rows={data.per_session} monthLabel={monthName(data.period.to)} />
+                <SessionChart
+                  rows={data.per_session}
+                  unit={data.per_session_unit}
+                  summary={data.per_session_summary}
+                />
               )}
             </Card>
           </div>

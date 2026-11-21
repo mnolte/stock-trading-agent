@@ -8,6 +8,7 @@ counts as uncached and is never recomputed.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -193,10 +194,99 @@ def _money2(value: Decimal) -> str:
     return f"${value:,.2f}"
 
 
-def _iso_week(day: date) -> tuple[str, date]:
-    """ISO week key and its Monday, for the >31-session buckets."""
-    iso = day.isocalendar()
-    return f"{iso.year}-W{iso.week:02d}", day - timedelta(days=day.weekday())
+# The 31-bar cap of the Cost per session chart (item 112): one bar per
+# session up to 31 sessions, per ISO week up to 31 weeks, per month up
+# to 31 months, per quarter beyond.
+MAX_SESSION_BUCKETS = 31
+
+_MONTHS_SHORT = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+]
+
+
+def _month_end(day: date) -> date:
+    """The last day of ``day``'s calendar month."""
+    nxt = date(day.year + (day.month == 12), day.month % 12 + 1, 1)
+    return nxt - timedelta(days=1)
+
+
+def bucket_unit(sessions: Sequence[date]) -> str:
+    """``session`` | ``week`` | ``month`` | ``quarter`` for a period's
+    New York session days (item 112). ``sessions`` need not be sorted."""
+    days = sorted(set(sessions))
+    if len(days) <= MAX_SESSION_BUCKETS:
+        return "session"
+    first, last = days[0], days[-1]
+    first_monday = first - timedelta(days=first.weekday())
+    last_monday = last - timedelta(days=last.weekday())
+    weeks = (last_monday - first_monday).days // 7 + 1
+    if weeks <= MAX_SESSION_BUCKETS:
+        return "week"
+    months = (last.year - first.year) * 12 + last.month - first.month + 1
+    if months <= MAX_SESSION_BUCKETS:
+        return "month"
+    return "quarter"
+
+
+def _bucket_span(day: date, unit: str) -> tuple[str, str, date, date]:
+    """(key, label, first, last) of the ``unit`` bucket holding ``day`` —
+    calendar bounds; the row's own dates come from its sessions."""
+    if unit == "session":
+        return day.isoformat(), str(day.day), day, day
+    if unit == "week":
+        monday = day - timedelta(days=day.weekday())
+        iso = day.isocalendar()
+        return (
+            f"{iso.year}-W{iso.week:02d}",
+            f"W{iso.week:02d}",
+            monday,
+            monday + timedelta(days=6),
+        )
+    if unit == "month":
+        return (
+            f"{day.year}-{day.month:02d}",
+            _MONTHS_SHORT[day.month - 1],
+            day.replace(day=1),
+            _month_end(day),
+        )
+    quarter = (day.month - 1) // 3 + 1
+    return (
+        f"{day.year}-Q{quarter}",
+        f"Q{quarter}",
+        date(day.year, (quarter - 1) * 3 + 1, 1),
+        _month_end(date(day.year, quarter * 3, 1)),
+    )
+
+
+def _iter_bucket_days(first: date, last: date, unit: str) -> Iterator[date]:
+    """One representative day per bucket from ``first``'s to ``last``'s."""
+    if unit == "session":
+        day = first
+        while day <= last:
+            yield day
+            day += timedelta(days=1)
+    elif unit == "week":
+        day = first - timedelta(days=first.weekday())
+        end = last - timedelta(days=last.weekday())
+        while day <= end:
+            yield day
+            day += timedelta(days=7)
+    elif unit == "month":
+        year, month = first.year, first.month
+        while (year, month) <= (last.year, last.month):
+            yield date(year, month, 1)
+            month += 1
+            if month == 13:
+                year, month = year + 1, 1
+    else:  # quarter
+        year, quarter = first.year, (first.month - 1) // 3
+        last_key = (last.year, (last.month - 1) // 3)
+        while (year, quarter) <= last_key:
+            yield date(year, quarter * 3 + 1, 1)
+            quarter += 1
+            if quarter == 4:
+                year, quarter = year + 1, 0
 
 
 def _cap_monthly(used: Decimal, limit: Any) -> dict[str, Any] | None:
@@ -380,7 +470,6 @@ def model_costs(
         )
     ]
     n_sessions = len(session_days)
-    weekly_buckets = n_sessions > 31
 
     bucket_col = _session_case()
     per_session_rows = session.execute(
@@ -392,36 +481,103 @@ def model_costs(
         .where(where)
         .group_by(LlmCall.session_date, bucket_col)
     ).all()
+
+    # --- Cost per session buckets (item 112) --------------------------
+    # At most 31 bars: per session, ISO week, month or quarter. Every
+    # bucket in the span gets a row, $0 included; a call's session_date
+    # always lands inside the span, so no cost is dropped.
+    call_dates = sorted({row[0] for row in per_session_rows})
+    span_days = sorted(set(session_days) | set(call_dates))
+    unit = bucket_unit(session_days or span_days)
     buckets: dict[str, dict[str, Any]] = {}
-    for sess_date, bucket, cost in per_session_rows:
-        if weekly_buckets:
-            key, monday = _iso_week(sess_date)
+    if span_days:
+        if unit == "session":
+            bucket_dates = span_days
         else:
-            key, monday = sess_date.isoformat(), sess_date
-        slot = buckets.setdefault(
-            key,
-            {
-                "from": monday,
+            bucket_dates = list(
+                _iter_bucket_days(span_days[0], span_days[-1], unit)
+            )
+        for day in bucket_dates:
+            key, label, first, last = _bucket_span(day, unit)
+            buckets[key] = {
+                "label": label,
+                "cal_from": first,
+                "cal_to": last,
+                "sessions": 0,
+                "sess_from": None,
+                "sess_to": None,
                 "live": Decimal(0),
                 "shadows": Decimal(0),
                 "reviews": Decimal(0),
                 "ask": Decimal(0),
-            },
-        )
-        name = str(bucket)
-        if name in ("live", "shadows", "reviews", "ask"):
-            slot[name] += Decimal(str(cost or 0))
+            }
+        for day in session_days:
+            slot = buckets.get(_bucket_span(day, unit)[0])
+            if slot is None:
+                continue
+            slot["sessions"] += 1
+            slot["sess_from"] = (
+                day if slot["sess_from"] is None else min(slot["sess_from"], day)
+            )
+            slot["sess_to"] = (
+                day if slot["sess_to"] is None else max(slot["sess_to"], day)
+            )
+        for sess_date, bucket, cost in per_session_rows:
+            slot = buckets.get(_bucket_span(sess_date, unit)[0])
+            if slot is None:
+                continue
+            name = str(bucket)
+            if name in ("live", "shadows", "reviews", "ask"):
+                slot[name] += Decimal(str(cost or 0))
+
     per_session = [
         {
             "key": key,
-            "from": slot["from"].isoformat(),
+            "label": slot["label"],
+            "from": (slot["sess_from"] or slot["cal_from"]).isoformat(),
+            "to": (slot["sess_to"] or slot["cal_to"]).isoformat(),
+            "sessions": slot["sessions"],
             "live": str(slot["live"]),
             "shadows": str(slot["shadows"]),
             "reviews": str(slot["reviews"]),
             "ask": str(slot["ask"]),
         }
-        for key, slot in sorted(buckets.items())
+        for key, slot in buckets.items()
     ]
+
+    def _bucket_total(slot: dict[str, Any]) -> Decimal:
+        return sum(
+            (Decimal(str(slot[p])) for p in ("live", "shadows", "reviews", "ask")),
+            Decimal(0),
+        )
+
+    grand_total = sum((_bucket_total(s) for s in buckets.values()), Decimal(0))
+    highest_key = max(buckets, key=lambda k: _bucket_total(buckets[k]), default=None)
+    highest_slot = buckets[highest_key] if highest_key is not None else None
+    largest_part = (
+        max(
+            ("live", "shadows", "reviews", "ask"),
+            key=lambda p: highest_slot[p],
+        )
+        if highest_slot is not None and grand_total > 0
+        else None
+    )
+    per_session_summary = {
+        "average_per_session": (
+            str((grand_total / n_sessions).quantize(Decimal("0.0001")))
+            if n_sessions
+            else None
+        ),
+        "highest": (
+            {
+                "key": highest_key,
+                "total": str(_bucket_total(highest_slot)),
+                "largest_part": largest_part,
+            }
+            if highest_slot is not None and grand_total > 0
+            else None
+        ),
+    }
 
     # --- monthly cap usage (current New York month) ---------------------
     month_start_utc, _ = _utc_bounds(today.replace(day=1), today)
@@ -657,6 +813,8 @@ def model_costs(
         "purposes": out_purposes,
         "models": models_out,
         "per_session": per_session,
+        "per_session_unit": unit,
+        "per_session_summary": per_session_summary,
         "answer": answer,
     }
 
