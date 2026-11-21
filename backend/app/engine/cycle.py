@@ -876,6 +876,10 @@ class CycleRunner:
                 sector_map = {}
         if shadow_only:
             try:
+                # Shadow-held symbols get model calls from the shadows, so
+                # their snapshots carry real news like every other call —
+                # never a default "failed" for a fetch that never ran.
+                shadow_news = await self._fetch_news(shadow_only, now, report)
                 for symbol, (snap, bars_1h, _daily, _todays) in (
                     self.signals.snapshots_for(shadow_only, now).items()
                 ):
@@ -888,7 +892,12 @@ class CycleRunner:
                         snapshot=snap,
                         bars_1h=bars_1h,
                         position=None,
-                        news=None,
+                        news=(
+                            None
+                            if shadow_news is None
+                            else shadow_news.get(symbol)
+                        ),
+                        news_status=self._news_status.get(symbol, "failed"),
                         last_bar=self.market_data.bars_cache.latest(
                             symbol, now - timedelta(minutes=5),
                         ),

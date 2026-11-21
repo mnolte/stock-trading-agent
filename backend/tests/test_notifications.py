@@ -93,6 +93,7 @@ def service(
         mailer=mailer,
         session_factory=session_factory,
         resolver=public_resolver,
+        email_retry_delay=0,
     )
 
 
@@ -369,6 +370,49 @@ async def test_successful_send_resets_failure_count(
     service.notify("source_failing", "OpenAI key failing")
     await service.drain()
     assert service.email_failures == 0
+
+
+async def test_email_send_retries_once_then_succeeds(
+    service: NotificationService,
+    secrets: SecretsStore,
+    mailer: FakeMailer,
+    session_factory: SessionFactory,
+) -> None:
+    """A transient SMTP failure gets one retry: the row ends sent and
+    the failure count stays clean (item 111 — the 19 Nov shock-brake
+    mail was lost to a single timeout)."""
+    await _configure_smtp(service, secrets)
+    mailer.sent.clear()
+    mailer.fail_with = RuntimeError("Connection unexpectedly closed: timed out")
+    mailer.fail_times = 1
+    service.notify("source_failing", "Finnhub failing")
+    await service.drain()
+    (row,) = _rows(session_factory)
+    assert row.channel_status["email"] == "sent"
+    assert row.error is None
+    assert len(mailer.sent) == 1
+    assert service.email_failures == 0
+
+
+async def test_email_send_gives_up_after_the_retry(
+    service: NotificationService,
+    secrets: SecretsStore,
+    mailer: FakeMailer,
+    session_factory: SessionFactory,
+) -> None:
+    """Two failures in a row still record failed — the retry is one
+    attempt, not a loop."""
+    await _configure_smtp(service, secrets)
+    mailer.sent.clear()
+    mailer.fail_with = RuntimeError("connection refused")
+    mailer.fail_times = 2
+    service.notify("source_failing", "Finnhub failing")
+    await service.drain()
+    (row,) = _rows(session_factory)
+    assert row.channel_status["email"] == "failed"
+    assert "connection refused" in (row.error or "")
+    assert mailer.sent == []
+    assert service.email_failures == 1
 
 
 async def test_unconfigured_smtp_is_not_a_failure(
