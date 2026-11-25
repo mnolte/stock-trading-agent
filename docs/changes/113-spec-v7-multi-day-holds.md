@@ -5,7 +5,7 @@ title: Decision v7 also covers multi-day holds
 status: merged
 issue: 339
 kickoff: —
-spec_prs: [999]
+spec_prs: [340]
 build_prs: []
 ---
 
