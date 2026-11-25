@@ -2305,23 +2305,42 @@ From the live data of 9 November: in a "Sideways · high vol" regime the v5 tren
 
 Issue #206. Items 060 (VIX), 067 (economic releases) and 068 (breadth and sectors) collect market context that no decision uses. Decision v7 is the one prompt and snapshot version that may give it to the model, after the data shows which parts matter. One version for all four keeps it to one eval and one shadow, and lets them be compared with each other. Nothing below is built until step A is done and Marc has chosen.
 
+**Also in v7: multi-day holds** (item 113, decided 25 Nov). v7 is the next prompt version, so it also takes every change that has been waiting for one. Marc, 25 Nov: the agent is built to hold a symbol for up to 5 sessions, but v5 and v6 treat every overnight hold as a risk:
+- "Time left" (v5, v6): with under 120 minutes left, a target more than 2 ATR away is "very likely an overnight hold; weigh that as a conflict". The 14:46 and 15:46 cycles have 74 and 14 minutes left, and options put the target at 2.25 ATR or more (stop ≥ 1.5 ATR, reward to risk ≥ 1.5). So almost every candidate in 2 of the 6 cycles gets a conflict, and an unoutweighed conflict is a skip.
+- "Overnight" (v5, v6): in the last cycle, a hold whose stop is closer than `overnight.gap_p90_atr` needs confidence ≥ `neutral_probability` + 0.10, or the model exits; code then warns `hold_below_breakeven`. With stops of 1.5–4 1h ATR, many positions meet that every evening.
+- Neither prompt says how long a trade is meant to last, so the model reasons like a day trader.
+- `decision.v5.long_target_minutes` (120) has a Settings control but no code reads it: the prompts say "120" in words.
+
+Step A measures these too (see below). Step B makes them part of v7 whatever Marc picks for the market fields. If no market field is kept, v7 is still made, with only these changes.
+
 **Step A · evidence first.** Starts once all three items are live and at least 20 sessions of their data exist (counted from the last of the three). `docs/analysis/061-market-context.md`, from live, shadow and backtest data:
 - Insights → Slices (trades, win rate, average R with its 90% range; live, shadows and backtests apart) by: VIX percentile terciles and VIX 5-session change; breadth terciles; sector rank (1–3, 4–8, 9–11) and stock vs sector; sessions to the next release (0, 1, 2+); release next morning.
 - Option touches (target first, stop first) for every built option by the same groups: far more rows than trades.
 - Overnight gaps of held positions by VIX level, VIX change, and an 08:30 release the next morning.
 - What each adds over what the snapshot already has: the VIX within ATR-percentile terciles; sector rank within `rs_vs_spy_pct` groups; breadth within regime trend. A field that only repeats existing ones is dropped.
 - What the FOMC window cost (`fomc_window` candidates and their touches), and what the 15:46 entries since item 071 did.
+- **Holding overnight** (item 113), live and shadows (v5 and v6), each with n and the 90% range:
+  - Entries and skips per cycle (10:46 … 15:46), and the share of skips whose conflicts name the time left or an overnight hold.
+  - Option touches (target first, stop first, neither after 5 sessions) of candidates skipped at 14:46 and 15:46, against the same for earlier cycles.
+  - Held positions in the last cycle: held against exited. For the exits, what holding would have made: R at the next open, at the next close and after 5 sessions, or at the stop or target if touched first, gaps included. For the holds, the overnight gap in R and how often it opened below the stop.
+  - The same split by `stop_distance_atr` below or above `overnight.gap_p90_atr`, and by a release or earnings the next morning.
 - A list of candidate rules, each with its numbers, and the fields the data doesn't support.
 
-Marc picks the rules and fields. Fields that separate nothing stay stored and shown but don't go into v7; if none separates anything, v7 isn't made.
+Marc picks the rules and fields. Fields that separate nothing stay stored and shown but don't go into v7. If none separates anything, v7 is made with the multi-day hold changes only (item 113).
 
 **Step B · decision.v7** (its own spec PR by Claude, with the prompt text):
 - **Snapshot v7** = snapshot v6 plus a `market` block with the chosen fields, from: `vix` (close, date, percentile, 5-session change, VIXY since the close, stale), `breadth` (the four shares), `events` (the next release within 2 sessions: type, time, sessions away); and per candidate `sector` (ETF, rank, the sector's strength vs SPY, the stock's strength vs its sector). A null field is explained in the prompt as unknown, never as calm.
-- **Prompt** `decision.v7.md` = decision.v6 plus a short section per chosen rule.
+- **Prompt** `decision.v7.md` = decision.v6 plus a short section per chosen rule, and these changes (item 113):
+  - **Holding period**, stated near the top: a trade is meant to reach its target within `decision.v7.hold_sessions` (5) sessions. Holding overnight is normal and is not a conflict by itself. The snapshot gives `position.sessions_left` (hold_sessions − sessions_held) for holds and `hold_sessions` for candidates.
+  - **Time left:** the v5/v6 rule goes. The time left in the session is no reason to skip an entry or to exit. What matters is what falls before the target is likely reached: earnings inside the hold (`checks.earnings`, as today), a release the next morning (`events`, when kept), or the end of the hold period.
+  - **Overnight gaps:** `overnight.gap_p90_atr` against `position.stop_distance_atr` stays a fact the model weighs, not an exit rule. It is a conflict only when there is a reason for a larger gap than usual: earnings before the next open, a release the next morning, or a market field Marc keeps (for example a rising VIX). The `neutral_probability` + 0.10 overnight line goes; the exit line (neutral − `exit_margin`) stays.
+  - **The stop at Alpaca:** `position.stop` is the stop leg Alpaca holds. When the stored stop differs, `position.stop_stored` shows it, and the model reasons from Alpaca's (analysis 050, point 7).
+  - **Last-cycle entries:** no rule, unless step A shows the 15:46 or 14:46 entries do worse (item 071 left this to v7).
+- **Code:** for v7, `hold_below_breakeven` fires on the exit line only, not on an overnight hold. `decision.v5.long_target_minutes` is removed from config and Settings: no code reads it, and v5 and v6 keep their "120" in words. Like every removed key, a saved value appears under "Saved values without a control". New key `decision.v7.hold_sessions` (5, 1–20, a Settings control under Decisions; changing it needs no new prompt version, because the prompt reads it from the snapshot).
 - **Code checks** for any rule the model must not break, as the trend gate and `sideways_rule`.
 - **Contract:** the v6 contract plus the `market` block; output schema unchanged.
-- **Eval:** a case per rule, and per field null; v6 cases pass unchanged.
-- **Reaching live:** a shadow "I · v7" for at least 10 sessions next to live, then Marc decides.
+- **Eval:** a case per rule, and per field null; v6 cases pass unchanged. Item 113 adds: a good candidate at 14:46 and at 15:46 with a target 3 ATR away (enter, no time conflict); a last-cycle hold with the stop inside the usual gap and no event (hold allowed); the same with earnings or a release the next morning (a conflict to weigh); a hold at `sessions_left` 0 with the target far (exit is reasonable); Alpaca's stop differing from the stored one (the model uses Alpaca's).
+- **Reaching live:** a shadow "I · v7" for at least 10 sessions next to live, then Marc decides. The comparison shows, next to the usual numbers, entries per cycle and overnight holds and exits, with their results.
 
 **Not in this item:** switching the regime's volatility label from the ATR percentile to the VIX (it changes v5 and v6 too; a separate decision after step A); sizing by VIX, breadth or sector; implied volatility per stock (not collected).
 
