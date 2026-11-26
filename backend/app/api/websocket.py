@@ -17,12 +17,15 @@ oldest; with ``SA_AUTH=off`` only the cap applies.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from datetime import datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketDisconnected
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # The session re-check interval and the longest the loop sleeps between
 # evaluations — short enough that a FakeClock advance is noticed within
@@ -58,6 +61,16 @@ class UpdateBus:
             queue.put_nowait(payload)
 
 
+async def _send_json(websocket: WebSocket, payload: dict[str, object]) -> bool:
+    """Send one frame; False means the socket was already closed."""
+    try:
+        await websocket.send_json(payload)
+    except WebSocketDisconnected:
+        logger.debug("websocket send skipped: socket already closed")
+        return False
+    return True
+
+
 @router.websocket("/ws")
 async def feed(websocket: WebSocket) -> None:
     bus: UpdateBus = websocket.app.state.update_bus
@@ -79,8 +92,12 @@ async def feed(websocket: WebSocket) -> None:
     # subscribe() would be dropped, leaving the client without the
     # update until the next event or reconnect.
     queue = bus.subscribe()
+    close_event: asyncio.Event | None = None
     if auth is not None:
-        auth.register_socket(websocket, session_id)
+        close_event = auth.register_socket(websocket, session_id)
+    close_task = (
+        asyncio.ensure_future(close_event.wait()) if close_event is not None else None
+    )
     try:
         await websocket.accept()
         while True:
@@ -110,13 +127,19 @@ async def feed(websocket: WebSocket) -> None:
                 timeout = RECHECK_POLL_CAP_SECONDS
             topics_task = asyncio.ensure_future(queue.get())
             receive_task = asyncio.ensure_future(websocket.receive_text())
+            waiters: set[asyncio.Task[object]] = {topics_task, receive_task}
+            if close_task is not None:
+                waiters.add(close_task)
             done, pending = await asyncio.wait(
-                {topics_task, receive_task},
+                waiters,
                 timeout=timeout,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for task in pending:
-                task.cancel()
+                if task is not close_task:
+                    task.cancel()
+            if close_task is not None and close_task in done:
+                return
             if not done:
                 # Poll timeout: loop around and re-evaluate the session.
                 continue
@@ -126,15 +149,19 @@ async def feed(websocket: WebSocket) -> None:
                 if len(receive_task.result()) > 64 * 1024:
                     await websocket.close(code=1009)  # message too big
                     return
-                await websocket.send_json({"type": "pong"})
+                if not await _send_json(websocket, {"type": "pong"}):
+                    return
             if topics_task in done:
                 topics = topics_task.result()
-                await websocket.send_json(
-                    {"type": "update", "topics": sorted(topics)}
-                )
+                if not await _send_json(
+                    websocket, {"type": "update", "topics": sorted(topics)}
+                ):
+                    return
     except WebSocketDisconnect:
         pass
     finally:
+        if close_task is not None:
+            close_task.cancel()
         bus.unsubscribe(queue)
         if auth is not None:
             auth.unregister_socket(websocket)

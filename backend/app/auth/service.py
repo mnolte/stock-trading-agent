@@ -84,6 +84,15 @@ class _Socket(Protocol):
     async def close(self, code: int = ..., reason: str | None = ...) -> None: ...
 
 
+@dataclass
+class _SocketEntry:
+    """One registered feed socket and the event that wakes its loop."""
+
+    session_id: int | None
+    loop: asyncio.AbstractEventLoop
+    close_event: asyncio.Event
+
+
 class AuthError(Exception):
     """One failed auth step → an HTTP response with the PR 25 error shape."""
 
@@ -187,9 +196,7 @@ class AuthService:
         # WebSocket registry (item 083, S7): every open feed socket with
         # its session id (None without sign-in) and the loop it runs on,
         # plus the per-session index used to close sockets at once.
-        self._sockets: OrderedDict[
-            _Socket, tuple[int | None, asyncio.AbstractEventLoop]
-        ] = OrderedDict()
+        self._sockets: OrderedDict[_Socket, _SocketEntry] = OrderedDict()
         self._sockets_by_session: dict[int, set[_Socket]] = {}
 
     # ------------------------------------------------------------------
@@ -392,37 +399,41 @@ class AuthService:
 
     def register_socket(
         self, websocket: WebSocket, session_id: int | None
-    ) -> None:
+    ) -> asyncio.Event:
         """Track a feed socket; ``security.max_sockets`` caps the total —
         a new socket closes the oldest. With SA_AUTH=off only the cap
-        applies (session_id stays None)."""
+        applies (session_id stays None). The returned event is set before
+        a registry close, so the feed loop stops waiting at once."""
         cap = int(self._config.get("security", "max_sockets", default=20))
         while len(self._sockets) >= max(cap, 1):
-            oldest, (old_session, old_loop) = self._sockets.popitem(last=False)
-            if old_session is not None:
-                self._sockets_by_session.get(old_session, set()).discard(oldest)
-            self._close_socket(oldest, old_loop, "socket_limit")
+            oldest, old_entry = self._sockets.popitem(last=False)
+            if old_entry.session_id is not None:
+                self._sockets_by_session.get(old_entry.session_id, set()).discard(oldest)
+            self._close_socket(oldest, old_entry, "socket_limit")
         loop = asyncio.get_running_loop()
-        self._sockets[websocket] = (session_id, loop)
+        close_event = asyncio.Event()
+        self._sockets[websocket] = _SocketEntry(session_id, loop, close_event)
         if session_id is not None:
             self._sockets_by_session.setdefault(session_id, set()).add(websocket)
+        return close_event
 
     def unregister_socket(self, websocket: WebSocket) -> None:
         entry = self._sockets.pop(websocket, None)
-        if entry is not None and entry[0] is not None:
-            self._sockets_by_session.get(entry[0], set()).discard(websocket)
+        if entry is not None and entry.session_id is not None:
+            self._sockets_by_session.get(entry.session_id, set()).discard(websocket)
 
     def _close_socket(
-        self, websocket: _Socket, loop: asyncio.AbstractEventLoop, reason: str
+        self, websocket: _Socket, entry: _SocketEntry, reason: str
     ) -> None:
         async def _do() -> None:
+            entry.close_event.set()
             try:
                 await websocket.close(code=WS_SESSION_END_CODE, reason=reason)
             except Exception:  # noqa: BLE001 - already closed is fine
                 logger.debug("socket close failed (already closed)")
 
         try:
-            asyncio.run_coroutine_threadsafe(_do(), loop)
+            asyncio.run_coroutine_threadsafe(_do(), entry.loop)
         except RuntimeError:
             logger.debug("socket loop already closed")
 
@@ -436,7 +447,7 @@ class AuthService:
             for websocket in list(self._sockets_by_session.pop(session_id, set())):
                 entry = self._sockets.pop(websocket, None)
                 if entry is not None:
-                    self._close_socket(websocket, entry[1], reason)
+                    self._close_socket(websocket, entry, reason)
 
     # ------------------------------------------------------------------
     # attempts and rate limits
