@@ -470,6 +470,29 @@ def test_socket_closes_at_once_on_sign_out(app_auth: Any) -> None:
                 ws.receive_json()
 
 
+def test_update_after_registry_close_does_not_fail_socket(app_auth: Any) -> None:
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        csrf = sign_in(client, secret, remember=True)
+        ws = client.websocket_connect("/ws/ws", headers=_ws_headers(client))
+        with ws:
+            ws.send_text("ping")
+            assert ws.receive_json() == {"type": "pong"}
+            r = client.post(
+                "/api/auth/sign-out", json={}, headers={"X-CSRF-Token": csrf}
+            )
+            assert r.status_code == 200
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+            # The registry close used to leave the feed loop subscribed:
+            # this publish then sent on the closed socket and failed its task.
+            assert client.portal is not None
+            client.portal.call(
+                app.state.update_bus.publish, "settings", "banners"
+            )
+            time.sleep(0.1)
+
+
 def test_socket_cap_closes_the_oldest(app_auth: Any) -> None:
     import contextlib
 
