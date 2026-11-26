@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-11-26 — [061] Market-context analysis, step A first refresh (analysis)
+
+Issue #206, with the overnight-holding measurements requested for item 113 (#339). No app behaviour changes.
+
+- **`docs/analysis/061-market-context.md`:** the first refresh of the market-context report. The start condition is not met yet — 11 sessions are in the copied database against the required 20 — so every conclusion is marked preliminary and no field or rule is chosen. The report separates live, shadow and (when present) backtest rows, marks cells under 20 as "too few", and gives the bootstrap 90% range of average R (2,000 resamples, fixed seed 61061).
+- **Holding overnight:** entries and skips by cycle with the stored-conflict match patterns; target/stop/neither outcomes of skipped late candidates; last-cycle holds against exits with counterfactual next-open, next-close and 5-session R (gaps included); splits by stop distance against the usual overnight gap and by earnings or an 08:30 release the next morning; candidate v7 holding-period wording with the evidence behind it.
+- **`make analysis-061`:** reruns the read-only analysis from a SQLite backup copy of `data/stock-agent.db`. The script is in `backend/scripts/analysis/market_context_061.py`; no network is used.
+- **Data limits named in the report:** no completed 12-month backtest is recorded; this window has no v5/v6 shadow rows because the active shadows are decision.v2 and rules-only; `cycles.next_release` is empty in the copied data, so release slices stay empty instead of treating null as no release.
+
 ## 2026-11-15 — [100] UX pass on Readiness and Logs (build, PR 2 of 3)
 
 Second build PR for item 100 (#296). The stored readiness statuses are unchanged; the screen words them by what is needed and adds the "What moves this forward" card, written by code from the stored snapshot. Logs recurring problems carry "Does it need you?" (act / watch / nothing to do) from the same unreviewed-error rule Readiness uses, sorted by it and counted above the list; the summary honours the chosen period.

@@ -1,4 +1,4 @@
-.PHONY: install install-backend install-frontend dev run run-backend run-frontend lint lint-backend lint-frontend logs-reindex create-user test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution readme-screens eval-ask
+.PHONY: install install-backend install-frontend dev run run-backend run-frontend lint lint-backend lint-frontend logs-reindex create-user test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution readme-screens eval-ask analysis-061
 
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
@@ -73,6 +73,9 @@ replay: ## replay a prompt over stored snapshots: make replay PROMPT=decision.v2
 
 replay-selection: ## rank vs expected-profit on stored cycles with a slot/sector/open-risk block: make replay-selection [OUT=docs/analysis/selection.md]
 	cd backend && ../$(PYTHON) -m app.replay_selection $(if $(OUT),--out $(OUT),)
+
+analysis-061: ## refresh docs/analysis/061-market-context.md from a read-only copy of the live database
+	cd backend && ../$(PYTHON) -m scripts.analysis.market_context_061
 
 eval-decision: ## run the decision-eval set: make eval-decision PROMPTS=decision.v3,decision.v4 [MODEL=] [YES=1]
 	cd backend && ../$(PYTHON) -m app.eval_decision \
