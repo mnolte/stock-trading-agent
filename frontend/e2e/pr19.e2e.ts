@@ -69,9 +69,9 @@ test('performance: winners and tails card', async ({ page }, testInfo) => {
   await page.goto('/performance');
   await expect(page.getByRole('heading', { name: 'Winners and tails' })).toBeVisible({ timeout: 60_000 });
 
-  // Small-sample banner below min_trades.
-  await expect(page.getByText('6 of 20 trades')).toBeVisible();
-  await expect(page.getByText(/Too few closed trades to read the tail yet/)).toBeVisible();
+  // Item 076: the small-sample banner lives once, under the summary —
+  // the tails card no longer shows its own.
+  await expect(page.getByText(/Too few closed trades to read the tail yet/)).toHaveCount(0);
 
   // R distribution with its aria-label.
   await expect(
@@ -93,4 +93,31 @@ test('performance: winners and tails card', async ({ page }, testInfo) => {
   await expect(page.getByText('How to read it:')).toBeVisible();
 
   await page.screenshot({ path: shot(testInfo.project.name), fullPage: true });
+});
+
+// Item 076: while every after-exit row is pending, the table folds into
+// one line carrying the first result date.
+test('performance: after the exit folds all-pending rows', async ({ page }) => {
+  const pendingTails = {
+    ...TAILS,
+    first_result_date: '2026-10-22',
+    rows: TAILS.rows.map((row) => ({
+      ...row,
+      after_exit_status: 'pending',
+      after_best_r: null,
+      after_close_r: null,
+    })),
+  };
+  await page.route('**/api/performance/tails**', (route) =>
+    route.fulfill({ contentType: 'application/json', json: pendingTails }),
+  );
+  await page.goto('/performance');
+  await expect(page.getByRole('heading', { name: 'After the exit' })).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(
+    page.getByText('6 trades are inside their 5-session window; the first result arrives'),
+  ).toBeVisible();
+  // No per-trade pending rows: the symbols' after-exit cells stay folded.
+  await expect(page.getByText('pending')).toHaveCount(0);
 });

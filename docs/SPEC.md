@@ -15,7 +15,7 @@ v0.1 is done when:
 - The agent runs unattended through full US sessions for 4 consecutive weeks without crashes or unreconciled positions.
 - Every decision (trade or no-trade) is stored with its inputs, prompt version, model output and outcome.
 - Every open position has a broker-side stop order at Alpaca at all times.
-- Performance is shown against a SPY buy-and-hold benchmark started on the same day.
+- Performance is shown against a SPY buy-and-hold benchmark started on the same day, with SPY's dividends.
 - No code path can place an order against a live (real-money) Alpaca endpoint.
 
 Name: **Stock Trading Agent** (shown in the GUI, page titles, emails and error pages). Technical names stay `stock-agent`: the repo, the database file, log files and containers. Prompt files already used (`decision.v1.md`, `decision.v2.md`) keep the old name because used prompts are never edited; the next prompt version uses the new one.
@@ -40,7 +40,7 @@ These defaults are set so Devin can start. Items marked **(review)** are Marc's 
 | Execution mode **(review)** | Automatic. Supervised mode is built together with its screen in PR 6; until then the app refuses to start when the mode is set to supervised | Same as Trading Agent |
 | Earnings data | Finnhub free earnings calendar | Alpaca has no earnings calendar |
 | News | Alpaca News API | Included with the Alpaca account |
-| Benchmark | SPY buy-and-hold from day one | Honest comparison against doing nothing |
+| Benchmark | SPY buy-and-hold from day one, with its dividends | Honest comparison against doing nothing |
 | Hosting | Local during development; production on a VPS (Docker Compose, Caddy, sign-in with password and authenticator) | See VPS deployment |
 
 ## Architecture and stack
@@ -223,6 +223,15 @@ FINRA replaced the pattern day trader rule and its $25,000 minimum with intraday
 
 Alpaca paper fills ignore slippage, market impact, regulatory fees and dividends. The performance screen shows both the raw paper P&L and an adjusted P&L with 0.05% slippage per side (configurable). Dividends on held positions are recorded from corporate actions and added to the adjusted figure.
 
+**Dividends, like for like** (item 108, decided 20 November). Alpaca paper pays no dividends, but the price still drops on each ex-date, so the raw paper P&L loses every dividend.
+
+- **Entitlement.** A position is credited a dividend whose ex-date falls after the day it was bought and on or before the day it was sold (or today, while it is open). One function does this everywhere: Performance, shadows, backtests and Insights.
+- **Cash dividends** add their amount per share × the quantity. **Stock dividends** (Alpaca's `stock_dividends`, where `rate` is new shares per share) add their value: quantity × rate × the close of the session before the ex-date ÷ (1 + rate). They are stored as their own type, `stock_dividend`, never as cash; a cash and a stock dividend on the same ex-date are two rows.
+- **SPY gets its dividends too.** SPY's return over a span counts each SPY dividend with its ex-date in the span (after the start, on or before the end), per share and not reinvested: (price at the end + those dividends − price at the start) ÷ price at the start. One function computes it, at read time from the stored corporate actions; the benchmark line, every "vs SPY" and Insights' edge over SPY use it. The stored `equity_snapshots` benchmark value stays SPY's price only, so older snapshots need no rewrite.
+- **Like for like.** Every comparison with SPY sets the agent's adjusted return (slippage and dividends) against SPY with dividends: Performance's summary and tile, the equity curve, Strategies, Readiness (Return vs SPY), the weekly review's facts and backtest results. The raw paper return is compared with SPY's price only, and shows on hover.
+- **Complete.** A corporate-action fetch returns every action in its window, whatever the count, for live syncs and backtests alike; a fetch that stops short is a failed fetch, not a short list.
+- **After-exit values** ignore dividends, as before (Outcome tracking → Computing the after-exit values).
+
 **Rate limits**
 
 One shared client-side limiter keeps total Alpaca calls under 150 per minute. Retries use exponential backoff and only cover reads; an order is never resent automatically after a timeout. Reconciliation decides what happened.
@@ -283,7 +292,7 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 - Outside the FOMC window (see Economic releases).
 - Regime is not Down + High.
 
-New entries are allowed in every cycle, the last one (15:46) included (decided 11 November, item 071). Until then the 15:46 cycle made exits only; no reason was ever written down. An entry sent at 15:46 has 14 minutes to fill, its limit order is cancelled after 10 minutes if unfilled (Alpaca integration), and the spread check still applies. `schedule.last_cycle_no_entries` (now `false`) turns the old rule back on. **Entry cutoff:** no entry order is sent after `execution.entry_cutoff` (15:50 New York), so the 10-minute fill window always ends by the close; this matters for an approval in supervised mode that arrives late in the last cycle (the approval then expires with "too close to the close").
+New entries are allowed in every cycle, the last one (15:46) included (decided 11 November, item 071). Until then the 15:46 cycle made exits only; no reason was ever written down. An entry sent at 15:46 has 14 minutes to fill, its limit order is cancelled after 10 minutes if unfilled (Alpaca integration), and the spread check still applies. `schedule.last_cycle_no_entries` (now `false`; a switch in Settings → Schedule, item 101) turns the old rule back on. **Entry cutoff:** no entry order is sent after `execution.entry_cutoff` (15:50 New York), so the 10-minute fill window always ends by the close; this matters for an approval in supervised mode that arrives late in the last cycle (the approval then expires with "too close to the close").
 
 All thresholds live in config (see Config layers).
 
@@ -294,6 +303,14 @@ All thresholds live in config (see Config layers).
 3. The active settings version.
 
 So a key added to the example in a release reaches every install, even one whose `config.yaml` or saved settings predate it. (Until now the first file found was the only one read, so a local `config.yaml` hid every later default: `supports_temperature` for gpt-6.1-sol and the email channel for `missing_stop` were both missing on 4 November.)
+
+**Saved values without a control** (decided 14 November, item 101). A settings version stores every setting, also the ones the Settings screen can't change, and layer 3 wins. So a default changed in the example does not reach an install whose saved version still holds the old value: `schedule.last_cycle_no_entries` stayed `true` from 18 October to 14 November this way (item 098). The rule:
+
+- Saved values keep winning. A save never changes a setting it didn't name, and a version stays the full record of what the agent ran with.
+- At every start and after every save, code compares the active version with layers 1 and 2 and lists every setting whose saved value differs and that has no control on the Settings screen. Open-ended maps and secrets are left out.
+- Settings → History shows that list on top: the setting, the saved value (in use), the config value, the version it dates from, and **Use the config value**. That saves a new version with a reason, like any change. A looser value asks "Confirm it is you"; so does a setting with no known direction.
+- While the list isn't empty, the Settings section list shows its count on History, the start writes one WARNING line with the settings' names, and Needs you shows one item.
+- A setting that the API accepts must have a control on the Settings screen. A test compares the two lists.
 
 Open-ended maps: `models` and the symbol-keyed `universe.sectors` and `universe.names` keep entries the example doesn't list — a model id or ticker is user data, not a config key. Every other dict stays strict.
 
@@ -434,6 +451,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 | 5 | Errors not reviewed (ERROR fingerprints without a review, as counted on Readiness) | reviewed on Logs |
 | 6 | Verdicts to confirm | confirmed or changed |
 | 7 | Settings or prompts saved but waiting for a restart or the next run (for example a review prompt) | applied |
+| 7 | Saved values that differ from the config file and have no control (item 101): "2 saved values differ from the config file", with Open Settings | each one is taken over, or the config matches again |
 
 - Under the list, one **health line**, always shown:
   - Alpaca: in sync, with the last reconcile time;
@@ -451,7 +469,9 @@ The layout must also work at phone width, so the VPS version can be checked from
 - On Positions:
   - a totals line: unrealized P&L, the result if every stop hits (in $ and % of equity), open risk against its cap, and the position closest to its stop;
   - per position: the bar, the result if the stop hits ($ and R; "locked in" when the stop is above the entry), the distance to the stop and to the target (with levels in the way), the planned exit, and the latest decision with a link;
-  - the Alpaca legs fold into one line ("3 legs · entry filled, stop and target open ✓"). The line opens by itself, in amber, when a leg is missing or not in its expected state.
+  - the Alpaca legs fold into one line ("3 legs · entry filled, stop and target open ✓"). The line opens by itself, in amber, when a leg is missing or not in its expected state;
+  - three links per position (item 100): **Chart** (the dashboard with that symbol selected), **Ask about this position** (the Ask drawer with the position as its context) and the latest decision;
+  - **Order history** (item 100): the first column names the order (symbol, side, leg, with the time under it) and the second holds its status; then quantity, price, fill, slippage and type. Newest first. A long status wraps instead of being cut off.
 
 **Daily briefing card.** Next to the risk budget card the dashboard shows today's briefing (see Reviews): the text (from item 079 a story of one to three paragraphs with its terms explained; see Stories), chips for the facts it used, whether every number was checked or the plain template was used (and why), the model, prompt version and cost, and when the next briefing is written. Before 15:00 Amsterdam on a trading day it shows the previous briefing with its date; with briefings turned off it says so and links to Settings. A briefing never changes after it is written; what changed since is in the cards around it.
 
@@ -478,6 +498,9 @@ The layout must also work at phone width, so the VPS version can be checked from
   - Numbers arrive as numbers and are formatted in the browser (minus sign −).
   - Copy that names a setting reads it from settings.
 - **Browser tab:** the title shows the agent's state (open, paused, kill switch).
+- **A control that can't be used says why** (item 100). An unavailable button stays visible and focusable (`aria-disabled`, not `disabled`), with its reason as text beside it, not only in a tooltip: "All 3 slots in use · archive a shadow to add one", "Promote needs 20 closed trades · B has 4". The numbers come from settings.
+- **Empty states** (item 100). An empty card shows two lines and at most one action: what is empty, then what will fill it or what to do, with times and thresholds read from the schedule and settings ("No weekly review yet. The first is written on Saturday at 10:00, covering Monday to Friday."). A filter or search that matches nothing offers to clear it and never says "yet". Where empty is the good outcome it says so ("No order problems in the last 5 sessions. That is the normal state."). The texts are fixed in `design/screens/States.dc.html` → Empty states; a second line whose value the screen doesn't have is left out, never guessed.
+- **Sticky bars on a phone** (item 100). Below 760 px a bar that sticks to the bottom of the screen is one line (48 px) and opens on tap.
 
 **Next release.** When a release is within 2 sessions, the this-cycle strip names it before the cycle counter: "CPI tomorrow 08:30" or "FOMC today 14:00 · no entries in the 13:46 cycle"; an open position tagged `release_next_morning` shows the same as a chip on its card (item 067).
 
@@ -519,9 +542,20 @@ The layout must also work at phone width, so the VPS version can be checked from
 - **Chart axes** drop labels as the chart narrows (first, last and every third stay); labels never overlap.
 
 **Settings screen.** One section at a time (decided 9 Nov, item 056): a section list on the left (a Section select on a phone) picks it, and each section has its own address (`/settings/risk`, `/settings/notifications` …; plain `/settings` opens the last section used, else API keys and data). The section list is grouped (item 069): **Trading** (Trading, Risk limits, Entry rules, Entry selection, Decision gates, Earnings), **Model** (Model and reviews, with Ask the agent), **Alerts and display** (Notifications, Display), **Connections** (API keys and data, Access, Server) and **Records** (Readiness, Schedule, History, Paper account); previous and next follow that order. On a phone the Section select has the same groups, and Find a setting stays above it. "Find a setting" and "Changed from default" show matching rows from every section, grouped by section. Unsaved changes are kept when switching sections, and the save bar lists all of them. Sections: API keys and data, Trading (execution mode, universe, slippage, and Prices and timeouts: quote ages, fill settle time, the Alpaca read timeout), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Entry selection, Decision gates (the v3–v5 thresholds, each strategy-overridable), Economic releases under Entry rules (the FOMC window on or off with its minutes, the FOMC dates in config with the last one, the FRED releases tracked; item 067), Earnings, Model and reviews (three groups: Decisions, Reviews, Ask the agent; the list links to the last), Display (near-stop distance, slow-call threshold), Notifications (the event table folded behind its counts), Readiness, Schedule (read-only), History, Access, Server and Paper account (decided 7 Nov). Each setting is one row: name, one-line explanation ending in its default ("· default 2.5%"), and the control with its unit. Values fixed by the spec (cash only, one share fits, cycle times) are shown as text with a lock ("Always on · fixed by the spec"), not as a disabled control. Item 069 adds:
+- **Schedule** (item 101). The cycle times are read-only. One switch sits under the table: **New entries in the last cycle** (on means `schedule.last_cycle_no_entries` is `false`). Turning it on is the looser side and asks "Confirm it is you"; the table's last row follows the unsaved value ("yes, sent by 15:50" or "no").
+- **Unsaved changes on a phone** (item 100). Below 760 px the bar is one line, "2 unsaved changes · Review and save". It opens to the list of changes with their tighter or looser tags, the reason field, Discard and "Save as v<n>"; the same rules apply (a reason is required, a looser change asks once more).
 - **Money next to percentages.** Every "% of equity" setting shows its dollar amount at today's equity beside the control ("= $40.74"), from the same equity and function the risk gates use, updated as the value is typed.
 - **What these limits mean today.** Risk limits opens with three plain sentences computed from the values on screen, unsaved changes included: what a stopped-out trade loses (and after the losing-streak halving); whether the open-risk budget or the position count limits first (positions × risk per trade against total open risk); where new entries stop for the day and where the kill switch turns on, in dollars.
 - **Two-value settings are labelled** per field (shock brake: "1h bar" and "since the open"), not "1.5 to 2.5".
+- **Every model setting has a control** (item 109, decided 20 Nov). Settings → Model and reviews shows every key in config that sets a model, a prompt or a model limit, in five groups:
+  - **Decisions:** model, prompt, temperature, max model calls per cycle, and new: call timeout (`decision.call_timeout_seconds`, 30, 5–120 s) and max answer length (`decision.max_output_tokens`, 2,048, 256–16,384).
+  - **Reviews:** a model and a prompt per task, and new: review temperature (`reviews.temperature`, 0.2, 0–2; OpenAI models only) and, behind "Word limits", `reviews.max_words.weekly_summary` (120, 40–400), `weekly_story` (350, 100–1,000) and `briefing` (220, 60–600); then the daily briefing switch and the review cost cap.
+  - **Ask the agent:** as today, and new, behind "Limits per answer": `ask.max_tool_rounds` (8, 1–20), `max_context_tokens` (60,000, 8,000–200,000), `max_tool_result_tokens` (6,000, 500–20,000), `max_output_tokens` (4,096, 256–16,384), `answer_timeout_seconds` (90, 15–300), `max_questions_per_minute` (10, 1–60), `max_notes` (100, 10–1,000).
+  - **Shadows and backtests** (new): `shadows.monthly_cost_cap_usd` (5, 0–100) and `backtest.monthly_cost_cap_usd` (20, 0–500), each with this month's use.
+  - **Models** (new, read-only): every entry of the `models` block with provider, what uses it, prices per million tokens (input, cached, cache write, output), cutoff, sampling (temperature, no temperature, or the effort) and API, and per-model timeouts when set. It says the list is edited in config only.
+  - Every picker lists every model in the list, and every prompt select every version of its task in the manifest. The defaults shown are the config defaults.
+  - Raising a cost cap, a call or token limit, a timeout or the questions per minute is **looser** (asks once more); lowering is tighter. A word limit and the temperature have no direction.
+  - Each cost cap row shows this month's use and links to Insights → Model costs.
 - **Advanced settings folded.** Trading → Prices and timeouts sits behind "Advanced · prices and timeouts", closed by default, with "n settings, all at default" or "n changed"; Find a setting and Changed from default open it.
 - **Strategy overrides shown.** A strategy-overridable setting that a shadow overrides says so in its row ("Shadow A uses 45–65"), linking to Strategies. A changed value is highlighted with "Changed from …" and Reset, and the section list shows how many changes each section has. A bar at the bottom lists the unsaved changes (old → new), asks for a reason (required, shown in History) and has Discard and "Save as v<n>". Each change to a risk limit, brake, entry rule or decision gate is tagged **tighter** (lowers what the agent can lose or how often it enters) or **looser**, in amber; a save with a looser change asks once more, naming them ("Raises risk per trade 0.5 → 0.6%. Save?"). Which direction is tighter is fixed per setting in code. Values are checked as they are typed against the allowed ranges (for example RSI from must be below RSI to); Save is disabled while one is invalid. Leaving the page with unsaved changes asks first. In Notifications → Email, "Test and save" is the main action and "Send test" the secondary one. Keys are not part of this flow: they are saved per key, straight away (see API keys).
 
@@ -646,6 +680,8 @@ These go into `AGENTS.md` at the repo root so Devin follows them on every PR.
 
 ## Build plan
 
+The list ends at item 58 (work item 101). Later work items are not added here; each has its own file in `docs/changes/`, and `python3 scripts/work_items.py` lists them (item 102).
+
 Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. Paper orders are first sent in PR 5; everything before runs on fakes and read-only data.
 
 1. **Skeleton.** Repo layout, FastAPI app, React shell with header and empty screens, config loading, SQLite and migrations, `AGENTS.md`, CI running tests with sockets blocked. *Done when:* app starts, header shows PAPER and a fake clock.
@@ -705,6 +741,8 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 54. **Sign-in resilience** (item 083). Trusted devices, the break-glass kill switch command, WebSocket session checks and the socket cap.
 55. **Supply chain and containers** (item 084). Signed images deployed by digest, pinned base images, container limits, backup delete protection, the full weekly audit.
 56. **CSV formulas and outbound addresses** (item 085). The one CSV writer; address checks at use; the SMTP host check.
+57. **UX pass on the remaining screens** (item 100). Strategies (small samples first, who was better), Backtest (runs first, the estimate in words, an answer sentence), Readiness (statuses by what is needed, What moves this forward), Logs (Does it need you?, phone rows), Positions (links, order history), the phone save bar in Settings, error pages on a phone, empty states, and reasons on unavailable controls.
+58. **Last-cycle switch and saved values without a control** (item 101). The switch in Settings → Schedule; the list in Settings → History with Use the config value; the Needs you item; the test that every changeable setting has a control.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -775,7 +813,7 @@ The model writes a weekly review, a daily briefing and a draft verdict on each d
 - **Summary sentence.** One or two sentences at the top, written by code from the same numbers as the tiles (no model): "In 24 sessions the agent closed 12 trades and won 9. After costs it is down $22.38 (−0.22%), level with SPY over the same days. 12 trades is too few to judge the strategy; 20 is the first useful mark."
 - **Tiles say what they mean.** Each tile has a second line in words, next to its definition on hover. Average R: "a winner earned about 2 times what it risked; a loser lost about 1 time". Max drawdown: "the deepest fall from a high · the kill switch turns on at −8%". Adjusted P&L: "after the assumed slippage and dividends". Win rate: "9 of 12 closed trades".
 - **API.** The performance response gains `summary` (the sentence), `exits` (date, symbol, R, won) and `drawdown` (peak date, low date, %), from the same functions as the tiles.
-- **Equity curve.** Each trade's exit is a dot on the curve (green won, red lost) with the symbol and result on hover; the deepest drawdown is shaded from its peak to its low.
+- **Equity curve.** Each trade's exit is a dot on the curve (green won, red lost) with the symbol and result on hover; the deepest drawdown is shaded from its peak to its low. The two lines are adjusted equity (raw equity minus slippage on the fills so far plus dividends with their ex-date so far) and SPY with its dividends; hovering a point also shows raw equity (item 108).
 - **Labels, not codes.** Exit reasons and actions go through the label map (target, stop, agent exit, earnings exit, Stop & flatten), here and in every table.
 - **Empty rows fold.** By regime lists only regimes with closed trades and adds one line: "No closed trades yet in: up · high vol, sideways, down." A regime that blocks entries (down · high vol) says so in that line.
 - **After the exit.** While every row is pending, the table is one line: "12 trades are inside their 5-session window; the first result arrives Thu 22 Oct." Once some are done, pending rows sit at the bottom, grouped into one row.
@@ -803,7 +841,7 @@ Watch more of the market without taking more risk: risk limits, gates and the 10
 | One share fits in max position | price ≤ max position size × equity at screen time (fixed by the spec) | Excluded |
 | Average dollar volume (close × volume) | ≥ $100M over the last 20 sessions | Excluded |
 
-A symbol that passes every check is eligible. An eligible symbol stays eligible until it fails 3 screens in a row; a new or warming-up symbol becomes eligible on its first pass. The eligible list is fixed for the whole session. If the screen itself fails (data error), the previous list is kept and a banner says so. If the app was down at 08:10 on a trading day, it runs the missed screen at startup. When that can't finish before the session's first cycle, that cycle uses the previous list and logs a WARNING; a banner shows the date of the list in use until today's screen is done. Held symbols are always handled by cycles, position checks, exits and earnings exits, whatever their screen status; a held symbol removed from the pool leaves it when the position is closed.
+A symbol that passes every check is eligible. An eligible symbol stays eligible until it fails 3 screens in a row; a new or warming-up symbol becomes eligible on its first pass. The eligible list is fixed for the whole session. If the screen itself fails (data error), the previous list is kept and a banner says so. A history check that fails for `universe.screen.history_fail_data_error_pct` (50) percent or more of the symbols eligible at the previous screen is such a data error, not that many symbol fails: no symbol's fail count moves (item 093). If the app was down at 08:10 on a trading day, it runs the missed screen at startup. When that can't finish before the session's first cycle, that cycle uses the previous list and logs a WARNING; a banner shows the date of the list in use until today's screen is done. Held symbols are always handled by cycles, position checks, exits and earnings exits, whatever their screen status; a held symbol removed from the pool leaves it when the position is closed.
 
 **Rank.** At the screen, each eligible symbol gets a rank: its return over the last 20 completed sessions minus SPY's over the same sessions (ties broken by dollar volume). The rank is shown on the Universe screen and the dashboard and is part of the input snapshot.
 
@@ -824,6 +862,7 @@ A symbol that passes every check is eligible. An eligible symbol stays eligible 
   - warming up: "daily bars 180 of 260 · 5-min 22 of 60 sessions", with a small bar;
   - ready: history loaded, "joins at the next screen · 08:10 NY Fri 16 Oct" (blue chip "ready", not "warming up");
   - eligible, held, excluded (with the failed check and its numbers), eligible · 1 fail or 2 fails.
+  - a row that kept its place with a failed history check shows the screen's numbers and the current ones: "Screen of Fri 13 Nov: 258 of 259 daily bars · 59 of 59 sessions. Now: history loaded. The fail clears at the next passing screen." Status, rank and fail count stay the screen's record (item 093).
 - **Pool by sector.** A compact row per sector: symbols in the pool, eligible, and the sector's rank of 11 at the last cycle (item 068). Clicking a sector filters the pool.
 - **Pool table.** Status is the third column, right after the symbol, so it shows on a phone. The fold row names its filter and count ("61 more eligible · show all"); an unknown company name shows "name pending", not "—". Columns with no value yet (rank, price, volume before the first screen) say "after the first screen" in the header's hint instead of a column of dashes.
 - **Remove.** The × asks in the row: "Remove ANET from the pool? Its cached bars stay for 120 sessions." with Remove and Cancel. The question stays inside the visible part of the table when the table scrolls sideways. Held symbols have no ×.
@@ -848,6 +887,15 @@ A shadow strategy decides on exactly the same inputs as live, every cycle, but n
 
 **GUI.** A Strategies screen in the Learn group: the comparison table (live, shadows and baselines), a warning while samples are small, equity curves with SPY, the selected strategy's configuration (what differs from live) with Pause, Archive and Promote, and the disagreements list. "New shadow" opens a dialog to name it, pick the kind, prompt version, model and temperature, and set rule overrides.
 
+From item 100:
+- **Small samples first.** While any strategy has fewer than `shadows.promote_min_closed_trades` (20) closed trades, the Compare card opens with the warning: the sessions so far, the range of closed trades, and that a difference starts to mean something from that count. Each row shows its closed trades against that count as a bar ("4 of 20").
+- **Columns.** Strategy (name, kind and configuration in one cell), return since the run started, vs SPY, average R, closed trades with won and lost, max drawdown, same as live with its count ("86% of 212"), model cost.
+- **New shadow** with every slot in use: unavailable, with "All 3 slots in use · archive a shadow to add one" beside it. **Promote** before the minimum: unavailable, with "Promote needs 20 closed trades · B has 4."
+- **Selected strategy.** Label–value rows: what differs from live, what is the same, when it started, model calls and cost, open virtual positions, and how many of its entries used a synthetic price ("1 of 6 entries").
+- **Disagreements.** Newest first. A row shows the symbol and date, both final actions with their confidence, the result in words ("B's trade: −1.0R at the stop", "B's trade is open", "+1.2% after 5 sessions"), who was better, and links to both decisions.
+- **Who was better** is decided by code, only where one side entered and the other didn't: the side that entered is better when its trade closed above 0R, the side that stayed out when that trade closed below 0R. Everything else is "not decided": an open or unfilled trade, a trade closed at exactly 0R, and a disagreement in which neither side or both sides traded.
+- **Tally and filter.** Above the list one sentence counts all disagreements of the run: "14 disagreements in 9 sessions. B's choice ended better in 3, live's in 2, and 9 are not decided yet." A filter shows All, the shadow better, live better or not decided. The API gives every item `better` (`shadow`, `live` or null) and the shadow's decision id, and the three counts over the whole run, not only the rows loaded.
+
 ## Backtesting (v0.2)
 
 A backtest replays strategies over past sessions with the same code that trades live, so results are comparable with the paper run. Built as PR 14.
@@ -867,6 +915,13 @@ A backtest replays strategies over past sessions with the same code that trades 
 **Results.** Per strategy: return, difference with SPY buy and hold over the same sessions, max drawdown, closed trades, win rate, average R, profit factor and time in market; equity curves with SPY; results by market regime and by symbol; the trade list; and every decision, opened in the same decision drawer as live. A "Read with care" list names every assumption the run relied on (assumed spreads, missing earnings days, same-bar stop and target, cache hits, survivorship). CSV export of trades and decisions. A backtest is evidence about the past, never a forecast; the screen says so and the weekly review never cites a backtest as a reason to change anything.
 
 **GUI.** A Backtest screen in the Learn group: the new-backtest form with quick ranges, strategy picker, the estimate and the cutoff check; the runs list with status, progress, cost and cancel; and the selected run's results, as one table with a column per strategy and one for SPY buy and hold. The form's From and To default from the agent's clock (in simulated mode the simulated date), never the computer's, and Run says what is missing while it can't start.
+
+From item 100:
+- **Order.** The runs list comes first, then the form; the selected run's results are beside them. On a phone: runs, results, then the form, with "On this page" chips.
+- **Before you run.** The estimate opens with two lines written by code, then one row per number (sessions, bars to download with the time, model calls with the cache hits, model cost with the cost at the call cap):
+  - the budget: "Fits this month's budget: about $6.70 of the $8.54 left", "May stop early: up to $9.10 at the call cap, $8.54 left" (amber), or "Over this month's budget: about $9.10, $8.54 left" (red, Run unavailable);
+  - the knowledge cutoff: "Starts after gpt-4.1-mini's knowledge cutoff (Oct 2023)" or the reason the run would be refused.
+- **Results header.** The run's title and settings, its actions (**View n trades**, **View decisions**, **Download CSV**), and an answer written by code from the results table: the first strategy's return against SPY buy and hold with the difference in points, both deepest falls, and the time in the market; then one sentence per further strategy with its return and the difference with the first. Under it, always: "This is evidence about the past, never a forecast." The sentence is stored with the run's results, so it never changes between page loads.
 
 ## Readiness
 
@@ -915,6 +970,24 @@ A Readiness screen in the Control group shows whether the paper evidence would j
 
 **GUI.** A verdict banner ("Not ready for live trading" until everything passes), summary tiles (pass, not yet, waiting, manual items, earliest possible), the Evidence, Model and Operations groups with current value, target, a progress bar for counts and the status, the manual items, and History. Every criterion explains how it is measured on hover and links to the screen with the details.
 
+From item 100. The stored statuses don't change; the screen words them by what is needed:
+
+| Stored | On screen | When |
+| --- | --- | --- |
+| pass | pass (green) | — |
+| not yet | building up (blue), with the estimate | Closed trades and Paper sessions: counts that grow by themselves |
+| not yet | below target (red) | every other criterion |
+| waiting for data | needs data (neutral), with "needs 30 closed trades · 3 so far" | the minimum sample isn't reached |
+| to do | to do (neutral) | manual items |
+
+- **Verdict banner.** Neutral, not red, while the run is not ready: "Not ready for live trading · 8 of 17 criteria pass". While the run has fewer sessions than `readiness.min_sessions` it adds "That is expected n sessions into a run." Green only when every criterion passes and every manual item is done.
+- **Tiles.** Pass, Below target, Building up, Needs data, Manual items, Earliest possible; two per row on a phone.
+- **What moves this forward.** A card under the tiles, written by code from the latest snapshot (it never measures a criterion again):
+  1. **You can act on these now**: every below-target criterion with its value and target, one sentence on what moves it, and one button to the screen where that happens. The sentence and the button come from one table in code, one row per criterion. With none: "Nothing to act on now."
+  2. **Only time fixes these**: the building-up counts with their estimates, and the needs-data criteria grouped by what they need.
+  3. **Yours to do whenever you choose**: the open manual items, with a link to them.
+  A group with nothing in it is left out.
+
 ## LLM call history
 
 The LLM inspector shows every model call ever made, not just today's, and can filter them by date, outcome (success, warning, error), source and a few more fields. Built as PR 18, after PR 17.
@@ -933,7 +1006,7 @@ A size reduced by a gate is not a warning; the model's action was kept.
 
 **Storage.** A new `llm_calls` table, one row per call:
 - What and where: sent at, New York session date, source (live, shadow, review, ask), strategy (shadows), kind (decision, briefing, weekly, verdict), the linked decision, shadow decision or review, cycle, symbol, context.
-- How: model, temperature, prompt version and hash, tokens in and out, cost and its source, latency in ms, final action.
+- How: model, temperature, prompt version and hash, tokens in and out, cost and its source, latency in ms, final action. From item 109 also `tokens_cached_in` (input read from the provider's prompt cache), `tokens_cache_write_in` (Anthropic cache creation) and `cache_saved` (money, the saving at the prices of that call, see Insights → Model costs); null on older rows, shown as "not recorded". The call details show them next to the tokens, and the CSV export gets the three columns.
 - Result: outcome, reasons JSON, error type, HTTP status, error message, provider and provider request id, raw response text; from item 074 `attention` (none, watch, act; see Does it need me?).
 - The row is written in the same transaction as the linked row, after the call has returned (hard rule 13). Error messages go through the same key scrubbing as logs; request headers are never stored.
 - The prompt is not duplicated. The system part is rebuilt from the versioned prompt file; if its hash differs from the stored hash, the screen says so instead of showing the text. The user part comes from the linked row's input snapshot (decisions, shadows) or facts JSON (reviews).
@@ -1148,7 +1221,9 @@ Every part of the app logs what it does, so a cycle, an order or a failure can b
 - **Clear filters** and **Download .jsonl**.
 - **Warnings and errors per day.** Stacked bars; clicking one shows that day.
 - **Recurring problems.** Grouped by fingerprint with level, count, first and last seen and examples. Clicking one filters the log on it. ERROR and CRITICAL problems show their review state: unreviewed, expected or fixed, with a Review button. Review opens a dialog: Expected or Fixed, plus a required note. These reviews feed Readiness (see Readiness → Errors in the log).
-- **Log.** Grouped per day under sticky headers, newest first. Each line shows its time (Amsterdam, New York on hover), a level chip, the message, the component and context chips (cycle, symbol). Context chips link to the cycle filter, the decision or the order.
+  - **Does it need you?** (item 100). Every problem carries one of the three levels of item 074, decided by code: **needs you** for a CRITICAL problem and for an ERROR problem without a review (the rule Needs you and Readiness use); **watch** for a WARNING problem counted `gui.log_watch_min_count` (5) times or more in the chosen period; **nothing to do** for the rest. The list is sorted by that level, then by count, and the three counts stand above it ("2 need you · 2 to watch · 4 nothing to do").
+  - On a phone each problem is a stacked row: the problem, then its level and review.
+- **Log.** Grouped per day under sticky headers, newest first. Each line shows its time (Amsterdam, New York on hover), a level chip, the message, the component and context chips (cycle, symbol). Context chips link to the cycle filter, the decision or the order. Below 760 px the time and level share one line and the message gets the full width under them (item 100).
 - **Opening a line.** It shows:
   - the exception with its traceback;
   - the stored JSON;
@@ -1295,7 +1370,7 @@ An Insights screen in the Learn group shows where the results come from, sliced 
 | Number | Definition | Why it matters for stocks |
 | --- | --- | --- |
 | Expectancy | Average R per closed trade, with a 90% range (± 1.64 standard errors) | Whether there is an edge at all, and how sure we are |
-| Edge over SPY at the same exposure | Run return − SPY return over the same sessions × the average share of equity invested | The agent is mostly in cash; comparing with SPY fully invested is unfair to it, comparing with nothing flatters it |
+| Edge over SPY at the same exposure | Run return − SPY return (with its dividends, item 108) over the same sessions × the average share of equity invested | The agent is mostly in cash; comparing with SPY fully invested is unfair to it, comparing with nothing flatters it |
 | Beta to SPY | Slope and correlation of daily equity returns against SPY's, from 20 sessions | Whether the result is just the market going up |
 | Overnight vs in session | P&L of held positions from the previous close to the open, versus from the open to the close or exit | Stops at Alpaca can't protect against overnight gaps; the edge should come from the session |
 | Gaps through the stop | Count of stop exits that filled more than 0.1R below the stop, and the extra R lost beyond −1R | The real risk per trade is larger than 1R when gaps are frequent |
@@ -1383,6 +1458,7 @@ Next to each step is what was lost and why: rules, call cap, price checks, model
 3. **Where are trades lost?** "Where trades come from" (the funnel), "What each filter removed" and "Skipped setups".
 4. **Which conditions work?** Slices.
 5. **What do confidence, fills and nights cost?** Calibration, Execution, and Overnight and in session.
+6. **What do the models cost?** (item 109) Every model call of the whole app, with cached prompts: see Model costs below.
 
 - **Answer sentences** come from fixed templates over the snapshot (no model) and are stored with it (`answers`). For question 1: "Not shown yet" while the 90% range includes 0; "Probably, but not proven yet" when its low end is above 0 but under 0.1R; "Yes" from 0.1R. These are wording thresholds, not trading rules.
 - **Answers, not dashes.** A number that needs more trades says so instead of "—": "needs 10 closed trades · 4 so far". A card whose numbers all need more trades shows that one line and its definition, not a table of dashes.
@@ -1390,9 +1466,28 @@ Next to each step is what was lost and why: rules, call cap, price checks, model
 - **Slices.** The dimension picker is one select with groups instead of 22 chips: Timing (entry cycle, weekday, sessions held), Market (regime, SPY that day, VIX level, VIX change, breadth, release next morning), Stock (sector, symbol, sector rank, stock vs sector, days to earnings, opening gap, entry vs VWAP, pullback depth, strength vs SPY, volatility), Model (confidence, stop and target basis, prompt and model). The chosen dimension is in the URL (`?dim=`). On a phone the table scrolls inside its card.
 - **No internal names.** Item numbers and code names don't appear in the screen's text ("(item 068)" and `rs_vs_sector_pct` stay in the spec). Dates follow the date rule ("14 Oct", never "2026-10-14").
 - **The 15:46 row.** Since item 071 the 15:46 cycle enters like the others. Its slice says "entries from 11 Nov" until it has 10 trades, instead of the rule text.
-- **On this page.** Under the filters, chips jump to the five questions.
+- **On this page.** Under the filters, chips jump to the six questions.
 - **The funnel says what was kept.** Each step shows the share of the step before that it kept ("14% kept") before what was lost. On a phone the step's name and count share a line and the bar and note sit under them.
 - **Column order.** Slices: the slice, Avg R, range, trades, win rate, total R, skips, sample. What each filter removed: the filter, R if taken, removed, target first, stop first, neither, status; a filter with too few decided touches says "needs 100" in the R column and leaves the shares empty.
+
+**Model costs** (item 109, decided 20 Nov). Section 6 of Insights shows what every model call cost and how often each model is called, for the whole app. Marc asked for it on 20 Nov: until now costs were spread over Settings, the inspector summary, Backtest and the weekly review.
+
+- **Scope.** Every call in `llm_calls` (live decisions, shadows, the weekly review, the daily briefing, verdicts, Ask) plus backtest runs. Not tied to the strategy and period toggles at the top of the page; it has its own period toggle: This month (default; the caps are monthly), Last month, 3 months, All time. Months are calendar months in New York, as the caps are.
+- **Computed on request,** not in the nightly snapshot: one grouped query over `llm_calls` (indexes on (source, sent at) exist) and one over `backtests`. `GET /api/insights/model-costs?period=` answers within 300 ms on the 100,000-call fixture.
+- **By purpose.** One row per purpose, in this order: Live decisions, Shadows, Weekly review, Daily briefing, Verdicts, Ask, Backtests, and Total. Columns: the purpose with its model or models and a short note (shadows name their strategies; Ask shows questions and cost per question; backtests name their runs and the answers reused from the answer cache, which cost nothing); Calls; Per session (calls ÷ New York sessions in the period; "—" for backtests, which run per run; Total leaves backtests out); Input (all input tokens); Cached (cached reads and their share of input); Cache write (Anthropic cache creation; "—" for none); Output (thinking included); Cost; Cache saved; Monthly cap (a bar with "$3.54 of $5 · 71%"; amber from 80%; the review cap is shown once, on the weekly review row, as it covers all three review tasks; live decisions say "no monthly cap · at most 10 calls a cycle" from `decision.max_calls_per_cycle`). Clicking a purpose opens the LLM inspector with that source and period (Backtests opens the Backtest screen).
+- **Cache saved** = cached tokens × (input price − cached price) − cache-write tokens × (cache-write price − input price), at the prices stored with each call. It can be negative for a model whose cache writes are not read back; then it shows in amber.
+- **By model.** One row per model used in the period, by cost: the model, its provider and what used it, its prices per million tokens from the `models` block (input, cached, cache write, output), Calls, Input, Cached, Cache write, Output, Cost and Per call (cost ÷ calls).
+- **Cost per session** (changed by item 112, decided 21 Nov). Its own full-width card under By model, at every width; it never shares a row.
+  - **Bars:** stacked: live, shadows, reviews and Ask. Backtests are left out and the card says so.
+  - **At most 31 bars.** One bar per New York session up to 31 sessions, one per ISO week (Monday start) up to 31 weeks, one per calendar month up to 31 months, and one per quarter beyond that. Every session, week or month in the period gets a bar, $0 included. The API returns the buckets with their unit (`session`, `week`, `month` or `quarter`) and, per bucket, its first and last date and its number of sessions.
+  - **Fit:** bars share the card's width equally, each at most 36 px wide, with 6 px between them (2 px below 600 px). The chart never scrolls sideways and never leaves its card, from 390 to 1920 px. Labels (day of the month, `W43`, or `Nov`) show at most one every 36 px, always the first and the last.
+  - **Scale:** the axis tops at a round number above the highest bar, with gridlines at the top and the half. A dotted line marks the average.
+  - **Subtitle** names the period and the unit: "This month · per session · backtests not included", "All time · per month · backtests not included".
+  - **Answer sentence** above the chart (fixed template): "Average $0.51 a session; the highest was $0.75 on Mon 14 Dec, with Ask the largest part." For weeks and months: "the highest week was W43 (19–23 Oct)" or "the highest month was October". The average is always per session: total ÷ sessions.
+  - **Amounts:** clicking or tapping a bar selects it, outlines it, and shows its dates, total and four amounts in a line under the chart. The highest bar is selected when the card opens. The bars are buttons: Tab reaches the chart and the arrow keys step through the bars. The line is announced politely to screen readers.
+- **Answer sentence** (fixed template, no model): the total and the number of calls, the backtest share, live decisions per session, the purpose closest to its cap ("Shadows are the closest to their cap: $3.54 of $5"), and the share of input served from the cache with what it saved.
+- **Calls stored before item 109** have no cache split: they count as uncached in Cached and Cache saved, and the card's note says so. Their cost is the stored cost and is never recomputed.
+- **Links.** The Model cost per trade tile in section 1 links to this section ("all model costs"); each cost cap in Settings → Model and reviews links here too.
 
 Before 10 closed trades, sections 1, 2 and 4 show what they will hold and how many trades they need; the funnel, skips and execution show as normal.
 
@@ -1580,7 +1675,7 @@ Every failure the browser can see has a defined page or message, and none of the
 
 **Not covered.** Caddy's own failure or the server being off can't be shown by the server. The outside uptime check and heartbeat cover those (see VPS deployment → Monitoring).
 
-**GUI.** `design/screens/Errors.dc.html` shows every page above. The texts are final; copy them as written.
+**GUI.** `design/screens/Errors.dc.html` shows every page above. The texts are final; copy them as written. Below 820 px an in-app error page sits in the phone shell (top bar, no sidebar) and its text uses the full width (item 100).
 
 ## Security hardening
 
@@ -1665,11 +1760,12 @@ Tightening a limit never asks.
 From Claude's audit (`docs/analysis/080-security-audit.md`, findings S1–S13). The earlier fixes hold; these rules close what was found next. Decided 11 Nov.
 
 **Error text is scrubbed where it is made** (item 081, S1). The log scrubber protects logs; error text also travels to notifications, emails, the database, the API and Ask. So:
-- **One function.** Every exception that becomes stored or shown text goes through `safe_error(exc)` (`app/errors.py`): the query string of any URL in the text is removed (`…/fred/releases/dates?…` becomes `…/fred/releases/dates`), then the scrubber's patterns and the stored secret values are applied, and the result is cut to 300 characters. `str(exc)` and `f"{exc}"` are not used for stored or shown text anywhere in `app/`; a test walks the code for them (allowlist with a comment, as for the ruff ignores).
+- **One function.** Every exception that becomes stored or shown text goes through `safe_error(exc)` (`app/errors.py`): the query string of any URL in the text is removed (`…/fred/releases/dates?…` becomes `…/fred/releases/dates`), then the scrubber's patterns and the stored secret values are applied, and the result is cut to 300 characters. Raw exception text — `str(exc)`, `{exc}`, `repr`, `.format()`, `%` formatting, traceback renderers and anything built on an `except`-bound name — is not used for stored or shown text anywhere in `app/`; a test walks the code for it (allowlist with a comment, as for the ruff ignores).
 - **Every `DataResult.error`** is built with it, in every data source (Alpaca, Finnhub, FRED, ECB, news), and so are `data_source_health` values, key-test results and the `detail` of API errors.
-- **Second line.** `Notifier.notify` scrubs its line, body and details, and `record_event` its details, with the same patterns and values, whatever the caller did.
+- **Second line.** `Notifier.notify` scrubs its line, body and details, `record_event` its details, and every key-test detail, with the same patterns and values, whatever the caller did.
 - **Tool results.** Every Ask tool result passes the scrubber before it is sent to the model or stored (see below).
-- **Stored rows.** At the first start after the fix the app scrubs `cycles.data_source_health`, `notifications` (subject, body), `events.details` and `ask_messages` once, with the current secret values and patterns, and logs how many rows changed. If any row changed, Needs you shows "A key appeared in stored error text. Replace the FRED and Finnhub keys" (order 2, leaves when both keys are replaced or the item is dismissed with a reason).
+- **Ask writes.** Thread context, titles, user text, assistant answers and notes pass the scrubber before they are stored or sent to the model — a pasted key is stored as `[redacted]`, never as itself (item 105).
+- **Stored rows.** At every start the app scrubs `cycles.data_source_health`, `notifications` (subject, body), `events.details` and `ask_messages` with the current secret values and patterns. A run that changes rows logs how many and records the flag event; Needs you then shows "A key appeared in stored error text. Replace the FRED and Finnhub keys" (order 2, leaves when both keys are replaced or the item is dismissed with a reason). A clean run records nothing, so an unresolved flag is not pushed forward (item 105).
 - **Test.** For each data source: a fake key, one HTTP error and one connection error; the key must be absent from the `DataResult`, the notification row, the email body, the cycle row, `GET /api/settings`, `GET /api/server` and the Ask tool results.
 
 **Ask sees trading settings only** (item 081, S3). The `settings` tool serves an allowlist of sections: `execution`, `rules`, `regime`, `events`, `indicators`, `decision`, `selection`, `risk`, `schedule`, `universe` (mode and screen thresholds, not names), `reviews`, `shadows`, `backtest`, `readiness`, `insights`, `performance`, `outcomes`. It never returns `ops`, `notifications.email`, `security`, `auth`, `logging`, `storage`, or anything from `secrets`. Notification channels are reported as on or failing, without addresses or hosts. A new config section is not served until it is added to the allowlist.
@@ -1730,7 +1826,10 @@ Decisions (live and shadows), the weekly review, the daily briefing, verdicts, r
 - `cutoff`: the model's reliable knowledge cutoff, used by the backtest lookahead check;
 - for Anthropic models, `effort` (`low`, `medium` or `high`; default `low`);
 - optionally `timeout_seconds`, overriding `decision.call_timeout_seconds` for that model;
-- for OpenAI models, `supports_temperature` (default true). With false, no temperature is sent, as for Claude models.
+- for OpenAI models, `supports_temperature` (default true). With false, no temperature is sent, as for Claude models;
+- for OpenAI models, `api`: `chat` (default) or `responses`, the API the adapter calls (tool calls on gpt-6.1-sol need the Responses API).
+
+Settings → Model and reviews → Models shows the whole list read-only (item 109): it is edited in config only and read at start.
 
 Settings, the shadow dialog, backtests and replays only offer models from this list. `model_prices` and `backtest.model_cutoffs` are folded into it, and `reviews.model` becomes `reviews.models` (one per task); the old keys are read for one release with a warning.
 
@@ -1759,11 +1858,11 @@ Settings, the shadow dialog, backtests and replays only offer models from this l
 - **A backtest** with a strategy whose provider has no working key is refused before it starts.
 - **A failing key during the session** (for example revoked) behaves as today: calls fail as `api_error`, the "Data source or API key failing" notification fires, and decisions on that provider count as skip or hold.
 
-**Costs.** Calls count toward the same caps as today (decisions, shadows, reviews, backtests), priced from the model list.
+**Costs.** Calls count toward the same caps as today (decisions, shadows, reviews, backtests), priced from the model list. Insights → Model costs shows them all, per purpose and per model (item 109).
 
 **Prompt caching.** Every `complete()` call sends the system prompt as the cacheable prefix: Anthropic marks it with cache control (ephemeral), OpenAI's automatic prefix caching applies with no marker. Cached reads count at the model's `cached_input` and Anthropic cache writes at `cache_write`, each falling back to `input` — the same accounting `converse()` already uses for Ask. Only the system prompt is shared (snapshots differ per symbol), and a prompt below the provider's cache minimum simply isn't cached. Calls made before caching shipped keep their stored cost; costs are never rewritten.
 
-**Backtests.** The lookahead check uses the model's `cutoff`. Current Claude 5.5 models have a reliable knowledge cutoff of June 2026, so their backtests can only start on 1 July 2026; the backtest screen says so, as it does for any model.
+**Backtests.** A finished, stopped or cancelled run stores its model use in `summary.model_usage` (item 109): per model, calls, input, cached, cache-write and output tokens, cost, and answers reused from the answer cache. Insights → Model costs reads it. The lookahead check uses the model's `cutoff`. Current Claude 5.5 models have a reliable knowledge cutoff of June 2026, so their backtests can only start on 1 July 2026; the backtest screen says so, as it does for any model.
 
 **What is recorded.** `llm_calls` gets `provider` and `provider_request_id` (new Alembic revision); the existing OpenAI request id column stays for older rows and is copied into the new column by the migration. Decisions, reviews and strategy versions already store the model; the provider is derived from the model list.
 
@@ -2286,7 +2385,7 @@ A drawer opens on any screen with that screen as context, so "why was this block
   - A number that doesn't is shown with a dotted amber underline: "not found in the data".
   - Under the answer: "1 number not found in the data".
   - The answer is not blocked; the check makes guesses visible.
-- **Under each answer:** model, number of lookups, cost, "data as of" time, Copy, and a link to its model calls in the inspector.
+- **Under each answer:** model, number of lookups, cost, "data as of" time, Copy, and a link to its model calls in the inspector. From item 109 the meta line sits above three buttons: Copy, Save as note, Model calls. An answer with a number not found in the data starts the meta line with that warning and names the underlined number.
 
 **Memory.** Nothing is remembered silently. Two kinds of memory are written by Marc; the agent reads them but never writes, changes or deletes them.
 - **Standing instructions.**
@@ -2404,6 +2503,13 @@ A drawer opens on any screen with that screen as context, so "why was this block
 - `design/screens/AskDrawer.dc.html`: docked next to Positions, mid-conversation, with steps, a table, reference chips, the answer footer and a streaming answer with Stop.
 - `design/screens/AskStates.dc.html`: first open with suggestions, earlier chats, problems (a number not found, a failed answer, a stopped answer, the monthly cap), notes, and the phone layout with an answer that uses a note.
 - "Save as note" sits in each answer's footer. The Settings design has the Ask the agent group (`design/screens/Settings.dc.html`).
+- **Layout** (item 109, decided 20 Nov):
+  - The header is one line: the icon, "Ask the agent" with the chat's title under it (both end in an ellipsis), and three 36 px icon buttons: Earlier chats, New chat (+), Close.
+  - The context chip stays on one line, ends in an ellipsis and shows the full context on hover; its × is a 20 px button.
+  - The composer is one box: the question (grows from 2 to 6 lines, then scrolls), and under it this month's Ask budget left ("$13.16 of $15 left this month") and Send, or Stop while an answer streams. One hint line sits under the box: read-only, Enter sends, Shift+Enter starts a new line.
+  - An answer's blocks (paragraphs, table, chips, footer) are 12 px apart; messages 16 px.
+  - Notes end with their date and source, then Edit and Delete as buttons.
+  - While an answer streams and Marc has scrolled up, a "Jump to latest" button shows above the composer; the log doesn't pull him down.
 - The sidebar gets the Ask button under the app mark on every screen; the phone top bar gets an Ask button next to the menu. (The header first had it; moved 5 Nov, item 045.)
 
 ## Concurrent requests (item 078, planned)

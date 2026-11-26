@@ -16,6 +16,7 @@ inside it (AGENTS.md hard rule 13).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -193,6 +194,34 @@ class AfterExitWorker:
     # ------------------------------------------------------------------
     # bars
 
+    def _cache_read(
+        self, row: _PendingRow
+    ) -> tuple[list[Bar5m], set[date]]:
+        """Cached bars and covered session dates — one blocking read."""
+        cached = self.market_data.get_5m_bars(row.symbol, row.start, row.end)
+        covered = self.market_data.bars_cache.covered_session_dates(
+            row.symbol, row.sessions
+        )
+        return cached, covered
+
+    def _store_and_merge(
+        self,
+        cached: list[Bar5m],
+        fresh: list[Bar5m],
+        must_fetch: bool,
+    ) -> list[Bar5m]:
+        """Store fetched bars, then union them onto the cached basis."""
+        self.market_data.bars_cache.store(fresh)
+        # Union by bar start: fetched bars win. With must_fetch the
+        # union starts empty — a cached bar whose basis is unknown is
+        # never mixed into a window that needs a uniform basis.
+        by_start: dict[datetime, Bar5m] = (
+            {} if must_fetch else {b.start: b for b in cached}
+        )
+        for bar in fresh:
+            by_start[bar.start] = bar
+        return [by_start[k] for k in sorted(by_start)]
+
     async def _bars(
         self, row: _PendingRow, actions: Sequence[CorporateAction]
     ) -> tuple[list[Bar5m] | None, str | None]:
@@ -206,11 +235,11 @@ class AfterExitWorker:
         fetch for the whole window; otherwise the cached bars' basis
         cannot matter (no split to adjust for). ``None`` + error string
         on a failed fetch.
+
+        The cache reads and the store are synchronous SQLite — they run
+        in a thread so a slow or locked database never stalls the loop.
         """
-        cached = self.market_data.get_5m_bars(row.symbol, row.start, row.end)
-        covered = self.market_data.bars_cache.covered_session_dates(
-            row.symbol, row.sessions
-        )
+        cached, covered = await asyncio.to_thread(self._cache_read, row)
         wanted = {s.date for s in row.sessions}
         must_fetch = split_factor_after(
             actions, row.symbol, row.sessions[0].date
@@ -230,16 +259,10 @@ class AfterExitWorker:
             # empty fetch is a real failure (retry, then unavailable) —
             # not a "pending" that retries forever.
             return None, "no bars returned"
-        self.market_data.bars_cache.store(fresh)
-        # Union by bar start: fetched bars win. With must_fetch the
-        # union starts empty — a cached bar whose basis is unknown is
-        # never mixed into a window that needs a uniform basis.
-        by_start: dict[datetime, Bar5m] = (
-            {} if must_fetch else {b.start: b for b in cached}
+        merged = await asyncio.to_thread(
+            self._store_and_merge, cached, fresh, must_fetch
         )
-        for bar in fresh:
-            by_start[bar.start] = bar
-        return [by_start[k] for k in sorted(by_start)], None
+        return merged, None
 
     # ------------------------------------------------------------------
     # one position
@@ -268,7 +291,9 @@ class AfterExitWorker:
         """Compute and store one position; returns done | pending | failed | unavailable."""
         bars, error = await self._bars(row, actions)
         if bars is None:
-            if self._record_failure(row.position_id):
+            if await asyncio.to_thread(
+                self._record_failure, row.position_id
+            ):
                 logger.warning(
                     "after-exit %s: fetch failed %d times (%s) — unavailable",
                     row.symbol,
@@ -287,8 +312,17 @@ class AfterExitWorker:
 
         best = max(bars, key=lambda b: b.high)
         close = max(bars, key=lambda b: b.start)
+        outcome = await asyncio.to_thread(
+            self._store_done, row.position_id, best, close
+        )
+        return outcome
+
+    def _store_done(
+        self, position_id: int, best: Bar5m, close: Bar5m
+    ) -> str:
+        """Write one position's after-exit result; one short transaction."""
         with self._session_factory() as session:
-            position = session.get(Position, row.position_id)
+            position = session.get(Position, position_id)
             if position is None or position.after_exit_status != "pending":
                 return "pending"
             position.after_exit_status = "done"
@@ -310,16 +344,7 @@ class AfterExitWorker:
         session_day = self._latest_closed_session(now)
         if session_day is None or self._ran_for == session_day.date:
             return report
-        factory = self._session_factory
-        with factory() as session:
-            due = self._due_rows(session, now)
-            actions = list(
-                session.execute(
-                    select(CorporateAction).where(
-                        CorporateAction.action_type == "split"
-                    )
-                ).scalars()
-            )
+        due, actions = await asyncio.to_thread(self._load_due, now)
         for row in due:
             # Fetch and compute outside any write transaction; each row is
             # stored in its own short one (hard rule 13).
@@ -340,3 +365,18 @@ class AfterExitWorker:
             report.unavailable,
         )
         return report
+
+    def _load_due(
+        self, now: datetime
+    ) -> tuple[list[_PendingRow], list[CorporateAction]]:
+        """Pending rows and split actions — one blocking read session."""
+        with self._session_factory() as session:
+            due = self._due_rows(session, now)
+            actions = list(
+                session.execute(
+                    select(CorporateAction).where(
+                        CorporateAction.action_type == "split"
+                    )
+                ).scalars()
+            )
+        return due, actions

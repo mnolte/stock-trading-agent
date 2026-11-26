@@ -30,7 +30,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.backtests.store import dir_size, run_dir_for
+from app.backtests.store import dir_size, run_base_for, run_dir_for
 from app.config import AppConfig
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
@@ -206,12 +206,27 @@ class BacktestManager:
             row = session.get(Backtest, run_id)
             if row is None or row.status in ACTIVE_STATUSES:
                 return False
-            folder = row.run_dir or str(run_dir_for(self.config, run_id))
             session.delete(row)
             session.commit()
-        path = Path(folder)
-        if path.exists() and path.name == f"run-{run_id}":
-            shutil.rmtree(path, ignore_errors=True)
+        # Only a direct child of the run base named ``run-<id>`` is
+        # removed: candidates come from listing the trusted base dir, so
+        # request- or stored text never becomes a path (hard rule 19,
+        # CodeQL py/path-injection).
+        base = run_base_for(self.config)
+        if not base.is_dir():
+            return True
+        try:
+            children = list(base.iterdir())
+        except OSError:
+            logger.warning("backtest delete: cannot list %s", base)
+            return True
+        for child in children:
+            if (
+                child.name == f"run-{run_id}"
+                and child.is_dir()
+                and not child.is_symlink()
+            ):
+                shutil.rmtree(child, ignore_errors=True)
         return True
 
     def clear_bar_store(self) -> bool:
@@ -371,7 +386,7 @@ class BacktestManager:
             for row in session.execute(
                 select(Backtest).where(Backtest.run_dir != "")
             ).scalars():
-                row.size_bytes = dir_size(Path(row.run_dir))
+                row.size_bytes = dir_size(run_dir_for(self.config, row.id))
             session.commit()
 
 

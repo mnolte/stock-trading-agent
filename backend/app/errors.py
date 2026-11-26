@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets as _secrets
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any
 
@@ -33,6 +35,34 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>\])}]+")
+
+
+def _drop_url_query(match: re.Match[str]) -> str:
+    url = match.group(0)
+    q = url.find("?")
+    if q == -1:
+        return url
+    h = url.find("#", q)
+    return url[:q] + (url[h:] if h != -1 else "")
+
+
+def safe_error(exc_or_text: BaseException | str, extra: Iterable[str] = ()) -> str:
+    """Exception-derived text that is safe to store, show, email or hand
+    to a model (hard rule 9, item 081).
+
+    URL query strings are dropped (they carry credentials), then the log
+    scrubber's key patterns and every registered secret value — plus any
+    ``extra`` values — are replaced, and the result is capped at 300
+    characters. Use it wherever exception text leaves the process
+    boundary: ``DataResult.error``, notifications, event details, API
+    answers and Ask tool results.
+    """
+    from app.logging_config import scrub_text
+
+    text = _URL_RE.sub(_drop_url_query, str(exc_or_text))
+    return scrub_text(text, extra)[:300]
 
 
 class ErrorCode(StrEnum):

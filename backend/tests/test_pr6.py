@@ -1165,6 +1165,7 @@ class _WsDouble:
 
     def __init__(self, bus: UpdateBus) -> None:
         self.app = SimpleNamespace(state=SimpleNamespace(update_bus=bus))
+        self.scope: dict[str, object] = {}
         self._bus = bus
         self._receive_calls = 0
         self.sent: list[dict[str, object]] = []

@@ -51,6 +51,8 @@ def _decision(
     no_call_reason: str | None = None,
     model_output: dict[str, object] | None = _SKIP_OUTPUT,
     cost: str | None = None,
+    rules_reason: str | None = None,
+    duration_seconds: float | None = None,
 ) -> int:
     naive = at_utc.astimezone(UTC).replace(tzinfo=None)
     with get_session_maker()() as session:
@@ -64,15 +66,22 @@ def _decision(
                 started_at=naive,
                 finished_at=naive,
                 status="done",
+                duration_seconds=duration_seconds,
             )
             session.add(cycle)
             session.flush()
+        elif duration_seconds is not None:
+            cycle.duration_seconds = duration_seconds
         decision = Decision(
             cycle_id=cycle.id,
             symbol=symbol,
             context="candidate",
             input_snapshot={"symbol": symbol, "price": 120.5},
-            rules_result={"status": "pass", "reason": None, "checks": []},
+            rules_result={
+                "status": "pass",
+                "reason": rules_reason,
+                "checks": [],
+            },
             model_output=model_output,
             validation_result={
                 "valid": True,
@@ -184,4 +193,80 @@ def test_no_call_why_for_call_cap(client: TestClient) -> None:
 
     card = client.get("/api/dashboard?symbol=NVDA").json()["latest_decision"]
     assert card["final_action"] == "no_call"
-    assert card["why"] == "call cap reached — the model was not asked"
+    # Item 073: `why` is the detail under the card's "call cap:" label —
+    # the GUI adds the label, so the text no longer repeats it.
+    assert card["why"] == "the call cap was reached"
+
+
+def test_cycle_line_summary_and_last_cycle(client: TestClient) -> None:
+    # Item 073: the strip's labelled values and the Last cycle tile read
+    # the stored per-cycle numbers.
+    _clock(client).set(datetime(2026, 10, 15, 16, 52, tzinfo=UTC))
+    _decision(
+        datetime(2026, 10, 15, 16, 46, tzinfo=UTC),
+        symbol="AAPL",
+        cost="0.002",
+        duration_seconds=42.5,
+    )
+    _decision(
+        datetime(2026, 10, 15, 16, 46, tzinfo=UTC),
+        symbol="MSFT",
+        final_action="no_call",
+        no_call_reason="rules",
+        model="none",
+        model_output=None,
+        rules_reason="below the minimum price",
+    )
+
+    body = client.get("/api/dashboard?symbol=AAPL").json()
+
+    summary = body["cycle_line"]["summary"]
+    assert summary["checked"] == 2
+    assert summary["passed"] == 1
+    assert summary["calls"] == 1
+    assert Decimal(summary["cost"]) == Decimal("0.002")
+    assert summary["took_seconds"] == 42.5
+    assert summary["took_warn"] is False
+    assert summary["changes"] == "nothing changed"
+
+    last = body["last_cycle"]
+    assert last["cycle_id"] == body["cycle_line"]["cycle_id"]
+    assert last["calls"] == 1
+    assert last["took_seconds"] == 42.5
+    assert last["took_warn"] is False
+
+
+def test_latest_decision_no_call_rules_detail(client: TestClient) -> None:
+    # A rules no-call shows the pre-filter's reason as the detail; the
+    # card prefixes the "pre-filter" label itself.
+    _clock(client).set(datetime(2026, 10, 15, 16, 52, tzinfo=UTC))
+    _decision(
+        datetime(2026, 10, 15, 16, 46, tzinfo=UTC),
+        symbol="NVDA",
+        final_action="no_call",
+        no_call_reason="rules",
+        model="none",
+        model_output=None,
+        rules_reason="below the minimum price",
+    )
+
+    card = client.get("/api/dashboard?symbol=NVDA").json()["latest_decision"]
+    assert card["no_call_reason"] == "rules"
+    assert card["why"] == "below the minimum price"
+    assert card["prompt_version"] == "decision.v1"
+    assert card["release_next_morning"] is None
+
+
+def test_cycle_line_slow_cycle_warns(client: TestClient) -> None:
+    # A cycle slower than schedule.cycle_duration_warn_minutes flags Took.
+    _clock(client).set(datetime(2026, 10, 15, 16, 52, tzinfo=UTC))
+    _decision(
+        datetime(2026, 10, 15, 16, 46, tzinfo=UTC),
+        symbol="AAPL",
+        duration_seconds=700,
+    )
+
+    body = client.get("/api/dashboard?symbol=AAPL").json()
+
+    assert body["cycle_line"]["summary"]["took_warn"] is True
+    assert body["last_cycle"]["took_warn"] is True

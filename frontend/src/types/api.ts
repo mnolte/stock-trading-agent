@@ -453,7 +453,9 @@ export interface ReviewsResponse {
 export interface ReviewContent {
   summary?: string;
   observations?: string[];
-  /** weekly.v2: {text, evidence} or null; weekly.v1 rows stored a string. */
+  /** weekly.v3 (item 079): the one-to-three-paragraph story. */
+  story?: string;
+  /** weekly.v2+: {text, evidence} or null; weekly.v1 rows stored a string. */
   suggestion?: { text: string; evidence: string } | string | null;
   text?: string;
   /** Briefings: the code-written status line shown above the text. */
@@ -504,10 +506,15 @@ export interface WeeklyFacts {
   };
   limits?: {
     weekly_summary_words?: number;
+    /** weekly.v3 (item 079): the story's word cap. */
+    weekly_story_words?: number;
     verdict_after_sessions?: number;
     skip_flat_pct?: number;
     [key: string]: unknown;
   };
+  /** Stories (item 079): term → one-sentence definition, for the terms
+   * this fact set uses. */
+  glossary?: Record<string, string>;
   return_pct: number | null;
   return_usd: number | null;
   equity_start: number | null;
@@ -566,8 +573,32 @@ export interface BriefingFacts {
   earnings_today: { symbol: string; time_of_day: string }[];
   earnings_tomorrow: { symbol: string; time_of_day: string }[];
   regime: string;
-  yesterday: { return_pct: number | null; return_usd: number | null };
+  /** briefing.v3 (item 079): the newest cycle's VIX facts, null until FRED
+   * has a close. */
+  vix?: {
+    close: number | null;
+    date: string | null;
+    percentile_1y: number | null;
+    stale: boolean;
+  } | null;
+  /** briefing.v3: the next scheduled economic release, null when the
+   * calendar has nothing coming. */
+  next_release?: {
+    type: string;
+    label: string;
+    date: string;
+    time: string;
+    sessions_away: number;
+  } | null;
+  yesterday: {
+    return_pct: number | null;
+    return_usd: number | null;
+    spy_return_pct?: number | null;
+  };
   banners: { kind: string; level: string }[];
+  /** Stories (item 079): term → one-sentence definition. */
+  glossary?: Record<string, string>;
+  limits?: Record<string, unknown>;
 }
 
 export interface ReviewDetail extends ReviewListItem {
@@ -576,6 +607,9 @@ export interface ReviewDetail extends ReviewListItem {
   content: ReviewContent | null;
   /** Briefings: the code-written status line shown above the text. */
   status_line?: string | null;
+  /** Briefings v3 (item 079): "The numbers" fold rows. */
+  numbers?: { label: string; value: string }[];
+  fact_count?: number;
   model: string | null;
   prompt_version: string | null;
   tokens: number | null;
@@ -809,7 +843,7 @@ export interface SettingsForm {
     tighten_quote_max_age_seconds?: number;
     fill_settle_seconds?: number;
   };
-  gui?: { near_stop_atr?: number };
+  gui?: { near_stop_atr?: number; log_watch_min_count?: number };
   inspector?: { slow_call_seconds?: number };
   api?: { broker_timeout_seconds?: number };
   selection: {
@@ -827,6 +861,8 @@ export interface SettingsForm {
     stop_atr_max: number;
     min_reward_risk: number;
     max_calls_per_cycle: number;
+    call_timeout_seconds?: number;
+    max_output_tokens?: number;
     entry_gate?: string;
     min_ev_r?: number;
     v3?: { min_room_atr?: number; min_edge?: number };
@@ -862,6 +898,12 @@ export interface SettingsForm {
     monthly_cost_cap_usd: number;
     models?: { weekly: string; briefing: string; verdict: string };
     prompts?: { weekly: string; briefing: string; verdict: string };
+    temperature?: number;
+    max_words?: {
+      weekly_summary?: number;
+      weekly_story?: number;
+      briefing?: number;
+    };
   };
   ask: {
     enabled: boolean;
@@ -870,7 +912,16 @@ export interface SettingsForm {
     max_cost_per_answer_usd: number;
     keep_days: number;
     instructions: string;
+    max_context_tokens?: number;
+    max_tool_rounds?: number;
+    max_tool_result_tokens?: number;
+    answer_timeout_seconds?: number;
+    max_questions_per_minute?: number;
+    max_notes?: number;
+    max_output_tokens?: number;
   };
+  shadows?: { monthly_cost_cap_usd?: number };
+  backtest?: { monthly_cost_cap_usd?: number };
   readiness: {
     min_closed_trades: number;
     min_sessions: number;
@@ -884,7 +935,7 @@ export interface SettingsForm {
     max_price_blocked_pct: number;
     error_auto_resolve_minutes: number;
   };
-  schedule: { cycles: string[] };
+  schedule: { cycles: string[]; last_cycle_no_entries: boolean };
   /** Economic releases (item 067): only the editable FOMC window
    * fields — dates, times and FRED ids are read-only on the page. */
   events?: {
@@ -938,7 +989,19 @@ export interface SettingsHistoryRow {
   reason: string;
 }
 
+export interface SavedWithoutControl {
+  key: string;
+  label: string;
+  saved: unknown;
+  config: unknown;
+  since_version: number;
+  since_at: string;
+  direction: string;
+}
+
 export interface SettingsResponse {
+  saved_without_control?: SavedWithoutControl[];
+  entry_cutoff?: string;
   settings: SettingsForm;
   active_version: number;
   pending_version: number | null;
@@ -965,6 +1028,8 @@ export interface SettingsResponse {
   connections: ConnectionRow[];
   history: SettingsHistoryRow[];
   reviews_spend_usd?: string | null;
+  shadows_spend_usd?: string | null;
+  backtest_spend_usd?: string | null;
   /** Event rows for the Notifications section, spec order. */
   notification_events: NotificationEventMeta[];
   /** SMTP card state; null when the notification service is absent. */
@@ -986,6 +1051,8 @@ export interface SettingsResponse {
     } | null;
     fred: string;
   } | null;
+  /** Item 078: concurrency.max_requests — read at start, restart to change. */
+  concurrency?: { max_requests: number };
   /** Item 069: active shadows' settings overrides, flattened to dotted
    * paths — a row shows "Shadow A uses 45–65" when its value differs
    * from live. */
@@ -993,6 +1060,11 @@ export interface SettingsResponse {
     string,
     { id: number; name: string; value: unknown }[]
   >;
+  /** Item 082: the backend's looser/tighter map — dotted leaf path to
+   * direction kind ("up" | "down" | "on" | "off" | "wider" | "longer" |
+   * "shorter" | "neutral"). The one map; the tighter/looser tags and
+   * the confirm gate both read it. */
+  directions: Record<string, string>;
 }
 
 /** POST /api/settings/preview — dollar amounts and summary figures for
@@ -1162,6 +1234,8 @@ export interface PerformanceRun extends PerformanceRunInfo {
 export interface PerformanceCurvePoint {
   date: string;
   equity: string;
+  /** Adjusted equity (slippage out, dividends in) — the drawn line. */
+  adjusted?: string | null;
   benchmark: string | null;
   eur_usd: string | null;
 }
@@ -1172,7 +1246,10 @@ export interface PerformanceSummary {
   return_eur: string | null;
   spy_return_pct: string | null;
   vs_spy_pct: string | null;
+  /** Price-only comparison, kept for the tile's hover (item 108). */
+  vs_spy_raw_pct?: string | null;
   adjusted_usd: string;
+  adjusted_pct?: string | null;
   slippage_pct: string;
   dividends_usd: string;
   win_rate_pct: string | null;
@@ -1181,6 +1258,10 @@ export interface PerformanceSummary {
   avg_r: string | null;
   max_drawdown_pct: string;
   kill_pct: string;
+  /** Item 076: the one-to-three-sentence run summary at the top. */
+  sentence?: string;
+  /** Closed trades below this show the page's small-sample banner. */
+  tail_min_trades?: number;
 }
 
 export interface PerformanceAggRow {
@@ -1197,6 +1278,8 @@ export interface DecisionOutcomeRow {
   count: number;
   avg_1session_pct: string | null;
   outcomes: number;
+  /** Item 076: NY date of the first 1-session price, while none is in. */
+  first_price_date?: string | null;
   read: string;
 }
 
@@ -1266,6 +1349,8 @@ export interface PerformanceTailsResponse {
   after_exit_sessions?: number;
   top_share_pct?: number;
   pending: number;
+  /** Item 076: NY date the first after-exit result arrives, if known. */
+  first_result_date?: string | null;
   unavailable: number;
   excluded: number;
   distribution: TailsBucket[];
@@ -1276,6 +1361,20 @@ export interface PerformanceTailsResponse {
   winners_kept: { share: string; winners: number } | null;
   after_exit: TailsAfterExitGroup[];
   rows: TailsTradeRow[];
+}
+
+/** Item 076: one agent trade's exit, drawn as a ring on the curve. */
+export interface PerformanceExit {
+  date: string;
+  symbol: string;
+  r: string | null;
+  won: boolean;
+}
+
+export interface PerformanceDrawdown {
+  peak_date: string;
+  low_date: string;
+  pct: string;
 }
 
 export interface PerformanceResponse {
@@ -1290,6 +1389,10 @@ export interface PerformanceResponse {
   };
   by_regime?: PerformanceAggRow[];
   by_symbol?: PerformanceAggRow[];
+  /** Item 076: regimes without closed trades, for the folded line. */
+  empty_regimes?: string[];
+  exits?: PerformanceExit[];
+  drawdown?: PerformanceDrawdown | null;
   decision_outcomes?: DecisionOutcomeRow[];
   closed_trades?: ClosedTradeRow[];
   open?: { count: number; symbols: string[]; unrealized: string };
@@ -1303,6 +1406,37 @@ export interface DashboardCycleLine {
   text: string;
   cycle_index: number;
   cycles_today: number;
+  /** Item 073: the last cycle's scheduled time (UTC ISO) and its numbers —
+   * the strip's sentence and labelled values are built from these, not
+   * parsed out of `text`. Null/absent off-session. */
+  time?: string | null;
+  cycle_id?: number | null;
+  summary?: {
+    checked: number;
+    passed: number;
+    calls: number;
+    cost: string;
+    took_seconds: number | null;
+    took_warn: boolean;
+    changes: string;
+    /** Item 073: the sentence's outcome clause counts. */
+    held: number;
+    skipped: number;
+    entered: number;
+    blocked: number;
+    approved: number;
+  } | null;
+}
+
+/** Item 073: the Last cycle tile — the latest cycle's stored duration,
+ * real model calls and the slow-cycle flag (schedule.cycle_duration_
+ * warn_minutes), shown off-hours too. */
+export interface DashboardLastCycle {
+  cycle_id: number;
+  time: string;
+  took_seconds: number | null;
+  calls: number;
+  took_warn: boolean;
 }
 
 // Cycle counter at the right end of the this-cycle strip. The schedule is
@@ -1391,6 +1525,12 @@ export interface BriefingCardData {
   status_line: string | null;
   text: string;
   chips: BriefingChip[];
+  /** Stories (item 079): "The numbers" fold rows, the glossary the
+   * story's terms resolve against, and the fact count for the fold's
+   * summary. Present on briefing.v3+ cards; absent on older versions. */
+  numbers?: { label: string; value: string }[];
+  glossary?: Record<string, string>;
+  fact_count?: number;
   /** "model" = every number checked; "template" = plain fallback + reason. */
   source: 'model' | 'template' | string;
   reason: string | null;
@@ -1466,6 +1606,13 @@ export interface DashboardLatestDecision {
   confidence: number | null;
   why: string | null;
   model: string | null;
+  /** Item 073: the meta line's "model · prompt version". */
+  prompt_version?: string | null;
+  /** Item 067/073: the 08:30 releases this entry was held into — Context
+   * group's release chips. */
+  release_next_morning?:
+    | { type: string; label?: string; date: string; time?: string }[]
+    | null;
   regime: { trend: string; volatility: string } | null;
   /** VIX fields of the decision's cycle (item 060). */
   vix?: VixPayload | null;
@@ -1522,6 +1669,7 @@ export interface DashboardResponse {
   };
   cycle_line: DashboardCycleLine | null;
   cycle_counter: CycleCounter | null;
+  last_cycle: DashboardLastCycle | null;
   stats: DashboardStats;
   briefing: DashboardBriefing | null;
   latest_decision: DashboardLatestDecision | null;
@@ -1575,6 +1723,7 @@ export interface UniverseThresholds {
   lookback_sessions: number;
   drop_after_failed_screens: number;
   max_position_pct: number;
+  max_calls_per_cycle?: number;
 }
 
 export interface UniverseFunnelStep {
@@ -1594,9 +1743,16 @@ export interface UniverseScreenSummary {
 
 export type UniverseRowStatus =
   | 'eligible'
+  | 'eligible_fails'
+  | 'ready'
   | 'excluded'
   | 'warming_up'
   | 'held';
+
+export interface UniverseWarmProgress {
+  daily: { have: number; need: number };
+  m5: { have: number; need: number };
+}
 
 export interface UniverseRow {
   symbol: string;
@@ -1604,6 +1760,8 @@ export interface UniverseRow {
   sector: string;
   added_at: string | null;
   status: UniverseRowStatus;
+  progress?: UniverseWarmProgress | null;
+  next_screen?: string | null;
   rank: number | null;
   last_close: string | null;
   avg_dollar_volume: string | null;
@@ -1611,6 +1769,11 @@ export interface UniverseRow {
   fails: number;
   failed_check: string | null;
   detail: string;
+  /** Live history check for a row whose screen failed on history
+   * (item 093); null for every other row. */
+  history_now?: { loaded: boolean; detail: string } | null;
+  /** The screen session date ("YYYY-MM-DD") the row's record is from. */
+  screen_date?: string | null;
   held: boolean;
   qty: number;
   screened: boolean;
@@ -1620,9 +1783,18 @@ export interface UniverseRow {
 export interface UniverseCounts {
   pool: number;
   eligible: number;
+  ready: number;
   excluded: number;
   warming_up: number;
   held: number;
+}
+
+export interface UniverseSectorSummary {
+  sector: string;
+  pool: number;
+  eligible: number;
+  rank: number | null;
+  rank_total: number | null;
 }
 
 export interface UniverseResponse {
@@ -1637,7 +1809,47 @@ export interface UniverseResponse {
   pool?: { size: number; max: number };
   counts?: UniverseCounts;
   screen?: UniverseScreenSummary | null;
+  sectors?: UniverseSectorSummary[];
   rows?: UniverseRow[];
+}
+
+// ---- Sync runs (item 077) ---------------------------------------------------
+
+export interface UniverseSyncFailure {
+  what: string;
+  error: string;
+  next_retry: string | null;
+}
+
+export interface UniverseSyncJob {
+  job: string;
+  label: string;
+  status: 'running' | 'ok' | 'partial' | 'failed' | string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  done: number | null;
+  total: number | null;
+  failures: UniverseSyncFailure[];
+  schedule?: string | null;
+  late?: boolean;
+}
+
+export interface UniverseSyncHistory {
+  ready: number;
+  total: number | null;
+  eta_seconds: number | null;
+}
+
+export interface UniverseSyncResponse {
+  jobs: UniverseSyncJob[];
+  history: UniverseSyncHistory | null;
+  max_requests: number | null;
+}
+
+export interface UniverseSyncRetryResult {
+  job: string;
+  accepted: boolean;
 }
 
 export interface UniverseAddResult {
@@ -1675,7 +1887,12 @@ export interface StrategyDisagreement {
   shadow_action: string;
   shadow_label: string;
   live_decision_id: number;
+  shadow_decision_id: number | null;
   result: string;
+  /** The result in words (item 100): "B’s trade: −1.0R at the stop". */
+  result_text: string;
+  /** Who was better, decided by code: only where exactly one side entered. */
+  better: 'shadow' | 'live' | null;
   tone: 'positive' | 'negative' | 'neutral';
 }
 
@@ -1708,10 +1925,19 @@ export interface StrategyRow {
   overrides?: Record<string, number>;
   calls?: number;
   missed?: number;
+  /** Filled entries and how many of them used a synthetic price (item 100). */
+  entries?: number;
+  synthetic_entries?: number;
   open_positions?: { symbol: string; qty: number }[];
   differences?: { differs: StrategyDifference[]; same: StrategyDifference[] };
   promote?: { allowed: boolean; closed: number; needed: number; reason: string | null };
-  disagreements?: { total: number; sessions: number; items: StrategyDisagreement[] };
+  disagreements?: {
+    total: number;
+    sessions: number;
+    /** Over every disagreement of the run, before the row limit (item 100). */
+    counts: { shadow_better: number; live_better: number; undecided: number };
+    items: StrategyDisagreement[];
+  };
 }
 
 export interface StrategyOverrideOption {
@@ -1824,7 +2050,12 @@ export interface BacktestRun {
   process_id: number | null;
   size_bytes: number | null;
   warnings: string[] | null;
-  summary: Record<string, BacktestStrategySummary> | null;
+  summary:
+    | (Record<string, BacktestStrategySummary> & {
+        /** The code-written answer sentence, stored with the run (item 100). */
+        answer?: string;
+      })
+    | null;
   refuse_reason: string | null;
   created_at: string | null;
   finished_at: string | null;
@@ -1926,6 +2157,38 @@ export interface ReadinessCriterion {
   hint: string;
   estimate: string | null;
   estimate_date: string | null;
+  /** Item 100: the minimum-sample unit a waiting criterion counts
+   * towards ("30 closed trades"); null when not waiting on a sample. */
+  needs: string | null;
+  /** Item 100: raw numbers/dates the forward sentences fill from. */
+  detail: Record<string, unknown>;
+}
+
+/** Item 100: one "you can act on this now" row. */
+export interface ReadinessForwardAct {
+  key: string;
+  name: string;
+  value_text: string;
+  sentence: string;
+  button: string;
+  href: string;
+}
+
+/** Item 100: one "only time fixes this" line (a building-up count or a
+ * needs-data group sentence). */
+export interface ReadinessForwardTime {
+  kind: 'count' | 'needs';
+  key?: string;
+  name?: string;
+  text: string;
+}
+
+export interface ReadinessForward {
+  act: ReadinessForwardAct[];
+  time: ReadinessForwardTime[];
+  /** Number of criteria in the "only time" section. */
+  time_count: number;
+  manual_open: number;
 }
 
 export interface ReadinessManualItem {
@@ -1968,8 +2231,12 @@ export interface ReadinessResponse {
     manual_done: number;
     manual_total: number;
     earliest: { label: string; date: string; text: string } | null;
+    /** Item 100: sessions into the run, and the configured minimum. */
+    sessions: number | null;
+    min_sessions: number;
   };
   manual: ReadinessManualItem[];
+  forward: ReadinessForward;
   errors: ReadinessErrorItem[];
   history: ReadinessHistoryEntry[];
 }
@@ -1978,6 +2245,8 @@ export interface ReadinessResponse {
 
 export type LlmCallOutcome = 'success' | 'warning' | 'error';
 export type LlmCallSource = 'live' | 'shadow' | 'review' | 'ask' | 'backtest';
+/** Item 074: none | watch | act — set once at write time, never recomputed. */
+export type LlmCallAttention = 'none' | 'watch' | 'act';
 
 /** The ask metadata on an ask call: its thread and the question it
  * served ("Question k of n") with the screen it was asked on. */
@@ -2020,6 +2289,7 @@ export interface LlmCallRow {
   reasons: string[];
   error_type: string | null;
   http_status: number | null;
+  attention: LlmCallAttention;
   backfilled: boolean;
 }
 
@@ -2036,12 +2306,29 @@ export interface LlmCallsSummary {
   cost_total: number | null;
   cost_by_source: Record<LlmCallSource, number | null>;
   latency: { median_ms: number | null; p95_ms: number | null; counted: number };
+  /** Item 074: calls per attention level under the filters. */
+  attention: Record<LlmCallAttention, number>;
   buckets: {
     session_date: string;
+    /** One-session periods bucket per cycle; `key` is `cycle:<id>` or
+     * `after_close`, with `label` the cycle's New York time. */
+    key?: string;
+    cycle_id?: number | null;
+    label?: string | null;
     calls: number;
     success: number;
     warning: number;
     error: number;
+  }[];
+  /** Item 074: most frequent reasons, with fix, level and filter. */
+  top_reasons?: {
+    reason: string;
+    change_reason: string | null;
+    kind: string | null;
+    count: number;
+    fix: string | null;
+    attention: LlmCallAttention;
+    filter: string;
   }[];
   /** Session calendar under the other filters (date range ignored). */
   session_dates: string[];
@@ -2081,6 +2368,19 @@ export interface LlmCallDetail extends LlmCallRow {
   };
   result: string;
   explanation: string | null;
+  /** The action the model chose before code changed it (changed_by_code). */
+  model_action?: string | null;
+  /** Item 074: one "What happened" panel per reason — the spec's fixed
+   * text plus this call's own detail; the GUI never writes its own. */
+  explanations?: {
+    code: string;
+    title: string;
+    means: string;
+    cause: string;
+    fix: string;
+    detail: string | null;
+    links: { label: string; href: string }[];
+  }[];
   link: string | null;
   /** The model's configured effort — Claude models only. */
   effort?: string | null;

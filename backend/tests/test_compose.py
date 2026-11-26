@@ -35,7 +35,10 @@ def test_app_container_is_hardened() -> None:
     assert app["restart"] == "unless-stopped"
     assert app["stop_grace_period"] == "90s"
     assert "mem_limit" in app
+    assert app["pids_limit"] == 256
     assert any(t.startswith("/tmp:") for t in app["tmpfs"])
+    # Item 084: the app runs the image CI built, by digest.
+    assert app["image"].startswith("${SA_IMAGE:")
     env = app["environment"]
     assert env["SA_HOST"] == "0.0.0.0"
     assert env["SA_AUTH"] == "required"
@@ -48,6 +51,18 @@ def test_healthcheck_uses_localhost_healthz() -> None:
     cmd = " ".join(str(p) for p in hc["test"])
     assert "localhost" in cmd and "/healthz" in cmd
     assert "SA_PORT" in cmd
+
+
+def test_caddy_is_hardened_and_pinned() -> None:
+    # Item 084 (S12): Caddy gets the same lockdown class as the app.
+    caddy = _compose()["services"]["caddy"]
+    assert caddy["read_only"] is True
+    assert caddy["cap_drop"] == ["ALL"]
+    assert caddy["cap_add"] == ["NET_BIND_SERVICE"]
+    assert "no-new-privileges:true" in caddy["security_opt"]
+    assert caddy["pids_limit"] == 128
+    assert any(t.startswith("/tmp:") for t in caddy["tmpfs"])
+    assert "@sha256:" in caddy["image"]
 
 
 def test_caddy_publishes_80_443_and_headers() -> None:

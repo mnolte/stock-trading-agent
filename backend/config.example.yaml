@@ -56,6 +56,7 @@ universe:
     min_avg_dollar_volume: 100000000
     lookback_sessions: 20       # dollar volume and rank
     drop_after_failed_screens: 3
+    history_fail_data_error_pct: 50  # history failing for this share (%) of the previously eligible pool fails the whole screen as a data error
   rank_by: return_vs_spy        # 20-session return minus SPY's
   watchlist_rows: 15            # dashboard rows in screened mode before "Show all"
   allowed_sectors: [Communication Services, Consumer Discretionary, Consumer Staples, Energy, Financials, Health Care, Industrials, Materials, Real Estate, Technology, Utilities, Index]   # 11 GICS sectors (Information Technology written as Technology) + Index
@@ -80,6 +81,10 @@ schedule:
 
 gui:
   near_stop_atr: 1.5          # positions closer to their stop than this turn amber (PR 35)
+  log_watch_min_count: 5      # item 100: a recurring warning counted this often in the Logs period shows as "watch"
+
+concurrency:                     # item 078, docs/SPEC.md — Concurrent requests
+  max_requests: 20               # most requests one batch keeps in flight (1-50); also sizes the HTTP pools; restart to change
 
 api:
   broker_timeout_seconds: 5   # GUI reads from Alpaca answer from the last reconciled values (stale) past this
@@ -257,9 +262,11 @@ reviews:
     briefing: gpt-4.1-mini
     verdict: gpt-4.1-mini
   temperature: 0.2              # OpenAI models only
-  prompts: {weekly: weekly.v2, briefing: briefing.v2, verdict: verdict.v2}
+  prompts: {weekly: weekly.v3, briefing: briefing.v3, verdict: verdict.v2}
   min_closed_trades_for_suggestion: 10
-  max_words: {weekly_summary: 120, briefing: 80}
+  # v3 stories (item 079) get their own caps; weekly_summary and the
+  # briefing.v1/v2 checks keep theirs.
+  max_words: {weekly_summary: 120, weekly_story: 350, briefing: 220}
   monthly_cost_cap_usd: 2         # separate from trading decisions
 
 notifications:
@@ -394,6 +401,8 @@ security:                       # PR 28, request gate and limits (see SPEC → S
   max_upload_kb: 5120           # the CSV import
   export_max_rows: 100000       # logs, LLM calls and CSV exports
   client_error_senders: 1000    # addresses remembered for the frontend error rate limit
+  allow_private_smtp: false     # let the SMTP host resolve to a private address (loopback is refused even then)
+  max_sockets: 20               # live-update WebSockets at once; a new one closes the oldest (item 083)
 
 auth:                           # PR 23; only used when SA_AUTH=required
   idle_hours: 12                # sign out after this long without activity

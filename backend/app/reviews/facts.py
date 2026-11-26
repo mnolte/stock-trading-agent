@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -20,11 +20,13 @@ from app.config import AppConfig
 from app.data.cache import _naive_utc
 from app.data.service import MarketDataService
 from app.db.models import (
+    CorporateAction,
     Cycle,
     Decision,
     Earning,
     EquitySnapshot,
     Event,
+    Fill,
     Order,
     Outcome,
     Position,
@@ -32,16 +34,21 @@ from app.db.models import (
     Run,
     Verdict,
 )
+from app.engine.benchmark import spy_return as spy_total_return
 from app.engine.performance import (
     _EXIT_LABELS,
     _entry_regime,
     _initial_stop,
 )
 from app.engine.state import ExecutionState
-from app.engine.trades import _trade_r
+from app.engine.trades import _dividends, _trade_r, close_lookup
 from app.market.calendar import NY_TZ, CalendarProvider
 from app.market.clock import Clock
+from app.reviews.glossary import glossary_for
 from app.signals.service import SignalService
+
+if TYPE_CHECKING:
+    from app.data.releases import ReleaseCalendarService
 
 UTC = ZoneInfo("UTC")
 
@@ -198,18 +205,9 @@ def weekly_facts(
         if return_usd is not None and equity_start
         else None
     )
-    spy_start = base_snap.spy_benchmark_value if base_snap is not None else None
-    spy_end = end_snap.spy_benchmark_value if end_snap is not None else None
-    spy_return_pct = (
-        (spy_end - spy_start) / spy_start * 100
-        if spy_start is not None and spy_start and spy_end is not None
-        else None
-    )
-    vs_spy_pts = (
-        return_pct - spy_return_pct
-        if return_pct is not None and spy_return_pct is not None
-        else None
-    )
+    # spy_return_pct and vs_spy_pts are computed below, once the week's
+    # positions and fills are known (item 108: adjusted vs SPY with
+    # dividends).
 
     # ---- drawdown over the week's snapshots ------------------------------
     snaps_in_window = session.execute(
@@ -416,11 +414,117 @@ def weekly_facts(
             )
         return sorted(rows, key=lambda r: r["name"])
 
+    # ---- SPY with dividends and the adjusted week return (item 108) ------
+    # The week's comparison is like-for-like: the adjusted return
+    # (raw equity change minus slippage on the week's fills plus
+    # dividends with their ex-date in the span) against SPY's total
+    # return over the same days. ``return_pct`` itself stays raw.
+    spy_return_pct: Decimal | None = None
+    vs_spy_pts: Decimal | None = None
+    if base_snap is not None and end_snap is not None:
+        start_day = _aware(base_snap.time).astimezone(NY_TZ).date()
+        end_day = _aware(end_snap.time).astimezone(NY_TZ).date()
+        benchmark = str(
+            config.get("performance", "benchmark", default="SPY")
+        )
+        run = session.execute(
+            select(Run).order_by(Run.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        spy_start = base_snap.spy_benchmark_value
+        spy_end = end_snap.spy_benchmark_value
+        if spy_start is not None and spy_start and spy_end is not None:
+            # Price-only first; upgraded to SPY's total return below
+            # when the run's baseline lets us recover the closes.
+            spy_return_pct = (
+                (spy_end - spy_start) / spy_start * 100
+            )
+        if (
+            spy_start is not None
+            and spy_start
+            and spy_end is not None
+            and run is not None
+            and run.spy_close
+            and run.starting_equity
+        ):
+            factor = run.spy_close / run.starting_equity
+            total = spy_total_return(
+                session,
+                start_day,
+                end_day,
+                spy_start * factor,
+                spy_end * factor,
+                benchmark,
+            )
+            if total is not None:
+                spy_return_pct = total
+        adjusted_return_pct: Decimal | None = None
+        if return_usd is not None and equity_start:
+            slip_pct = config.get_decimal(
+                "performance", "slippage_pct_per_side", default=Decimal("0.05")
+            )
+            slip = sum(
+                (
+                    qty * price * slip_pct / 100
+                    for _t, qty, price in session.execute(
+                        select(Fill.filled_at, Fill.qty, Fill.price).where(
+                            Fill.filled_at >= _naive_utc(start),
+                            Fill.filled_at < _naive_utc(end),
+                        )
+                    ).all()
+                ),
+                Decimal(0),
+            )
+            actions = session.execute(
+                select(CorporateAction).where(
+                    CorporateAction.action_type.in_(
+                        ("dividend", "stock_dividend")
+                    )
+                )
+            ).scalars().all()
+            week_actions = [
+                a
+                for a in actions
+                if start_day < a.date.date() <= end_day
+            ]
+            close_before = close_lookup(session)
+            today_ny = clock.now().astimezone(NY_TZ).date()
+            divs = Decimal(0)
+            held = session.execute(
+                select(Position).where(
+                    Position.opened_at < _naive_utc(end),
+                    (Position.closed_at.is_(None))
+                    | (Position.closed_at >= _naive_utc(start)),
+                )
+            ).scalars().all()
+            for p in held:
+                opened = _aware(p.opened_at).astimezone(NY_TZ).date()
+                hold_end = (
+                    _aware(p.closed_at).astimezone(NY_TZ).date()
+                    if p.closed_at is not None
+                    else today_ny
+                )
+                divs += _dividends(
+                    week_actions,
+                    p.symbol,
+                    opened,
+                    hold_end,
+                    p.qty,
+                    close_before=close_before,
+                )
+            adjusted_return_pct = (
+                (return_usd - slip + divs) / equity_start * 100
+            )
+        vs_spy_pts = (
+            adjusted_return_pct - spy_return_pct
+            if adjusted_return_pct is not None and spy_return_pct is not None
+            else None
+        )
+
     sessions = [
         calendar.session_for(monday + timedelta(days=i)) for i in range(5)
     ]
     iso = monday.isocalendar()
-    return {
+    facts: dict[str, Any] = {
         "kind": "weekly",
         "period": {
             "id": period_id,
@@ -442,6 +546,14 @@ def weekly_facts(
         "limits": {
             "weekly_summary_words": int(
                 config.get("reviews", "max_words", "weekly_summary", default=120)
+            ),
+            # weekly.v3 (item 079): the story's own cap; the summary cap
+            # above stays for weekly.v1/v2.
+            "weekly_story_words": int(
+                config.get("reviews", "max_words", "weekly_story", default=350)
+            ),
+            "drawdown_kill_pct": float(
+                config.get("risk", "drawdown_kill_pct", default=8)
             ),
             "verdict_after_sessions": int(
                 config.get("reviews", "verdict_after_sessions", default=5)
@@ -509,6 +621,9 @@ def weekly_facts(
             )
         ),
     }
+    # Stories (item 079): only the terms whose facts are present.
+    facts["glossary"] = glossary_for(facts, config)
+    return facts
 
 
 def _sample_facts(
@@ -720,6 +835,7 @@ def briefing_facts(
     signals: SignalService | None,
     state: ExecutionState | None,
     day: date,
+    releases: ReleaseCalendarService | None = None,
 ) -> dict[str, Any]:
     """Every fact for the daily briefing of trading day ``day`` (New York)."""
     now = clock.now()
@@ -788,7 +904,11 @@ def briefing_facts(
             regime = None
 
     # ---- yesterday's result ---------------------------------------------------
-    yesterday: dict[str, Any] = {"return_pct": None, "return_usd": None}
+    yesterday: dict[str, Any] = {
+        "return_pct": None,
+        "return_usd": None,
+        "spy_return_pct": None,
+    }
     prev = calendar.previous_trading_day(day)
     before_prev = (
         calendar.previous_trading_day(prev.date) if prev is not None else None
@@ -802,18 +922,88 @@ def briefing_facts(
             and start_snap.equity
         ):
             delta = end_snap.equity - start_snap.equity
+            spy_pct: float | None = None
+            spy_start = start_snap.spy_benchmark_value
+            spy_end = end_snap.spy_benchmark_value
+            if (
+                spy_start is not None
+                and spy_start
+                and spy_end is not None
+            ):
+                spy_pct = _f(
+                    (spy_end - spy_start) / spy_start * 100
+                )
+            run = session.execute(
+                select(Run).order_by(Run.id.desc()).limit(1)
+            ).scalar_one_or_none()
+            if (
+                spy_start is not None
+                and spy_start
+                and spy_end is not None
+                and run is not None
+                and run.spy_close
+                and run.starting_equity
+            ):
+                # Recover the SPY closes behind the stored
+                # price-only benchmark values, then take the total
+                # return over the same two session days (item 108).
+                factor = run.spy_close / run.starting_equity
+                start_day = _aware(start_snap.time).astimezone(NY_TZ).date()
+                end_day = _aware(end_snap.time).astimezone(NY_TZ).date()
+                total = spy_total_return(
+                    session,
+                    start_day,
+                    end_day,
+                    spy_start * factor,
+                    spy_end * factor,
+                    str(
+                        config.get(
+                            "performance", "benchmark", default="SPY"
+                        )
+                    ),
+                )
+                if total is not None:
+                    spy_pct = _f(total)
             yesterday = {
                 "return_pct": _f(delta / start_snap.equity * 100),
                 "return_usd": _f(delta),
+                "spy_return_pct": spy_pct,
             }
 
-    return {
+    # ---- VIX (item 079): the newest usable FRED close and its 1y
+    # percentile, from the latest cycle that recorded them ------------------
+    vix_cycle = session.execute(
+        select(Cycle)
+        .where(Cycle.kind == "cycle", Cycle.vix_close.is_not(None))
+        .order_by(Cycle.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    vix: dict[str, Any] | None = None
+    if vix_cycle is not None:
+        vix = {
+            "close": _f(vix_cycle.vix_close),
+            "date": (
+                vix_cycle.vix_date.isoformat()
+                if vix_cycle.vix_date is not None
+                else None
+            ),
+            "percentile_1y": _f(vix_cycle.vix_percentile_1y),
+            "stale": bool(vix_cycle.vix_stale),
+        }
+
+    next_release = (
+        releases.next_release(now) if releases is not None else None
+    )
+
+    facts: dict[str, Any] = {
         "kind": "briefing",
         "date": day.isoformat(),
         "positions": positions,
         "earnings_today": earnings_today,
         "earnings_tomorrow": earnings_tomorrow,
         "regime": regime or "unavailable",
+        "vix": vix,
+        "next_release": next_release,
         "yesterday": yesterday,
         "banners": banner_facts(
             session,
@@ -823,11 +1013,19 @@ def briefing_facts(
             state=state,
         ),
         "limits": {
+            # briefing.v3 (item 079): the story's cap; briefing.v1/v2 keep
+            # their fixed 80-word check in code, not this number.
             "briefing_words": int(
-                config.get("reviews", "max_words", "briefing", default=80)
-            )
+                config.get("reviews", "max_words", "briefing", default=220)
+            ),
+            "earnings_blackout_days": int(
+                config.get("risk", "earnings_blackout_days", default=3)
+            ),
         },
     }
+    # Stories (item 079): only the terms whose facts are present.
+    facts["glossary"] = glossary_for(facts, config)
+    return facts
 
 
 def verdict_eligible(decision: Decision) -> bool:

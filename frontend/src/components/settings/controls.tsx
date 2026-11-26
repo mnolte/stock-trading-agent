@@ -50,7 +50,7 @@ export function Section({
         {right && <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>{right}</div>}
       </div>
       {blurb && (
-        <p style={{ margin: '4px 0 6px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', lineHeight: 1.5, maxWidth: 640 }}>
+        <p style={{ margin: '4px 0 12px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', lineHeight: 1.5, maxWidth: 640 }}>
           {blurb}
         </p>
       )}
@@ -62,6 +62,7 @@ export function Section({
 }
 
 export function Row({
+  paths,
   id,
   label,
   help,
@@ -74,6 +75,7 @@ export function Row({
   onReset,
   children,
 }: {
+  paths?: string;
   id?: string;
   label: string;
   help: ReactNode;
@@ -87,7 +89,7 @@ export function Row({
   children: ReactNode;
 }) {
   return (
-    <div style={rowFrame(!!changed)}>
+    <div data-setting={paths} style={rowFrame(!!changed)}>
       <div style={{ flex: '1 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
         <label htmlFor={id} style={{ fontSize: 'var(--sa-text-base)', color: 'var(--sa-text)' }}>
           {label}

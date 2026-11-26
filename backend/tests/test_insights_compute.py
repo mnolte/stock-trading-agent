@@ -599,6 +599,40 @@ def test_random_noise_produces_at_most_chance_findings() -> None:
     assert len(out["findings"]) <= 6
 
 
+def test_entry_cycle_last_row_note_under_10() -> None:
+    """075: with the last-cycle rule off, the 15:46 row explains when
+    entries started until it has early_trades trades."""
+    late = _bulk(0, 7, "5", cycle="15:46")
+    trades = _bulk(12, 12, "5", cycle="10:46") + late
+    out = compute_insights(
+        trades, [], [], [], **base_kwargs(last_cycle_no_entries=False)
+    )
+    rows = {r["slice"]: r for r in out["slices"]["entry_cycle"]["rows"]}
+    row = rows["15:46"]
+    assert row["status"] == "note"
+    assert "Entries from 11 Nov" in row["note"]
+    assert "7 trades so far, shown from 10" in row["note"]
+    # the note row's trades are not counted as hidden
+    assert out["slices"]["entry_cycle"]["hidden"] == 0
+    # and the snapshot carries answers + needs/have (item 075)
+    assert "edge" in out["answers"]
+    assert out["headline"]["expectancy"]["needs"] == 10
+    assert out["headline"]["expectancy"]["have"] == 19
+
+
+def test_entry_cycle_last_row_note_zero_trades() -> None:
+    out = compute_insights(
+        _bulk(0, 12, "5", cycle="10:46"),
+        [],
+        [],
+        [],
+        **base_kwargs(last_cycle_no_entries=False),
+    )
+    rows = {r["slice"]: r for r in out["slices"]["entry_cycle"]["rows"]}
+    assert rows["15:46"]["status"] == "note"
+    assert "0 trades so far" in rows["15:46"]["note"]
+
+
 def test_entry_cycle_last_row_shows_data_when_rule_off() -> None:
     """071: with last_cycle_no_entries false the 15:46 row is a normal
     data row — the rule row only exists while the rule is on."""

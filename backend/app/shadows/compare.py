@@ -37,6 +37,7 @@ from app.db.models import (
     ShadowPosition,
     Strategy,
 )
+from app.engine.benchmark import spy_return as spy_total_return
 from app.market.clock import NY_TZ
 from app.shadows.portfolio import aware, ny_date
 from app.shadows.strategy import NON_ARCHIVED, describe, differences, strategy_start
@@ -119,12 +120,15 @@ def _max_drawdown(values: Sequence[Decimal]) -> Decimal:
     return worst
 
 
-def _spy_return(session: Session, since: datetime) -> Decimal | None:
-    """SPY buy-and-hold return since ``since`` from the benchmark column."""
+def _spy_return(
+    session: Session, run: Run, since: datetime, symbol: str
+) -> Decimal | None:
+    """SPY's total return since ``since`` — price plus its dividends
+    (item 108), the same figure Performance reports."""
     rows = [
-        v
-        for (v,) in session.execute(
-            select(EquitySnapshot.spy_benchmark_value)
+        (t, v)
+        for t, v in session.execute(
+            select(EquitySnapshot.time, EquitySnapshot.spy_benchmark_value)
             .where(
                 EquitySnapshot.time >= since.replace(tzinfo=None),
                 EquitySnapshot.spy_benchmark_value.is_not(None),
@@ -133,9 +137,28 @@ def _spy_return(session: Session, since: datetime) -> Decimal | None:
         ).all()
         if v is not None
     ]
-    if not rows or rows[0] == 0:
+    if (
+        not rows
+        or not run.spy_close
+        or not run.starting_equity
+    ):
         return None
-    return (rows[-1] - rows[0]) / rows[0] * 100
+    # spy_benchmark_value = starting_equity × spy ÷ run.spy_close, so the
+    # stored value converts back to the SPY price at that snapshot.
+    factor = run.spy_close / run.starting_equity
+    first_value = rows[0][1]
+    last_value = rows[-1][1]
+    assert first_value is not None and last_value is not None  # noqa: S101
+    price_start = first_value * factor
+    price_end = last_value * factor
+    return spy_total_return(
+        session,
+        ny_date(aware(rows[0][0])),
+        ny_date(aware(rows[-1][0])),
+        price_start,
+        price_end,
+        symbol,
+    )
 
 
 def _cost(session: Session, strategy_id: int, since: datetime) -> Decimal:
@@ -189,7 +212,12 @@ def strategy_row(
     ]
     equity_now = eq[-1][1] if eq else run.starting_equity
     ret = (equity_now - run.starting_equity) / run.starting_equity * 100
-    spy = _spy_return(session, start)
+    spy = _spy_return(
+        session,
+        run,
+        start,
+        str(config.get("performance", "benchmark", default="SPY")),
+    )
     sal = same_as_live(session, strategy.id, start)
     calls = session.execute(
         select(func.count(ShadowDecision.id))
@@ -203,6 +231,23 @@ def strategy_row(
     missed = session.execute(
         select(func.count(ShadowDecision.id)).where(
             ShadowDecision.strategy_id == strategy.id, ShadowDecision.missed.is_(True)
+        )
+    ).scalar_one()
+    entries = session.execute(
+        select(func.count(ShadowPosition.id)).where(
+            ShadowPosition.strategy_id == strategy.id,
+            ShadowPosition.run_id == run.id,
+            ShadowPosition.entry.is_not(None),
+        )
+    ).scalar_one()
+    synthetic_entries = session.execute(
+        select(func.count(ShadowPosition.id))
+        .join(ShadowDecision, ShadowPosition.entry_decision_id == ShadowDecision.id)
+        .where(
+            ShadowPosition.strategy_id == strategy.id,
+            ShadowPosition.run_id == run.id,
+            ShadowPosition.entry.is_not(None),
+            func.json_extract(ShadowDecision.gates_result, "$.quote.synthetic") == 1,
         )
     ).scalar_one()
     min_trades = config.get_int("shadows", "promote_min_closed_trades", default=20)
@@ -235,6 +280,8 @@ def strategy_row(
         "same_as_live_count": sal.counted,
         "calls": int(calls),
         "missed": int(missed),
+        "entries": int(entries),
+        "synthetic_entries": int(synthetic_entries),
         "open_positions": [{"symbol": p.symbol, "qty": p.qty} for p in opened],
         "differences": differences(config, strategy),
         "promote": {
@@ -256,9 +303,10 @@ def strategy_row(
 def live_adjusted_curve(
     session: Session, run: Run, perf: dict[str, Any], config: AppConfig
 ) -> list[dict[str, str]]:
-    """Live's curve as adjusted % of starting equity: each session's raw
-    equity minus the slippage on fills up to that day; the last point is
-    Performance's adjusted total exactly (it also includes dividends)."""
+    """Live's curve as adjusted % of starting equity: each point's
+    adjusted equity from Performance (slippage and dividends up to that
+    day, item 108); the last point is Performance's adjusted total
+    exactly."""
     curve = perf.get("curve") or {}
     points = curve.get("points") or []
     slip = config.get_decimal("performance", "slippage_pct_per_side", default=0.05)
@@ -269,8 +317,11 @@ def live_adjusted_curve(
     out: list[dict[str, str]] = []
     for point in points:
         day = date.fromisoformat(point["date"])
-        cum = sum((q * p * slip / 100 for t, q, p in fills if ny_date(t) <= day), Decimal(0))
-        value = Decimal(point["equity"]) - cum
+        if point.get("adjusted") is not None:
+            value = Decimal(point["adjusted"])
+        else:
+            cum = sum((q * p * slip / 100 for t, q, p in fills if ny_date(t) <= day), Decimal(0))
+            value = Decimal(point["equity"]) - cum
         out.append(
             {"date": point["date"], "pct": str(((value - start) / start * 100).quantize(Q2))}
         )
@@ -361,37 +412,101 @@ def _live_trade_r(session: Session, live: Decision) -> tuple[Position | None, De
     return position, r
 
 
+MINUS = "−"  # U+2212, the design's minus sign
+
+
+def _signed_r(r: Decimal) -> str:
+    """"+2.1R" / "−1.0R" / "0.0R" — the sign is a word-safe U+2212."""
+    if r > 0:
+        return f"+{r:.1f}R"
+    if r < 0:
+        return f"{MINUS}{abs(r):.1f}R"
+    return "0.0R"
+
+
+def _signed_pct(pct: Decimal) -> str:
+    if pct > 0:
+        return f"+{pct:.1f}%"
+    if pct < 0:
+        return f"{MINUS}{abs(pct):.1f}%"
+    return "0.0%"
+
+
+def _entered(action: str) -> bool:
+    return _norm(action) == "enter"
+
+
 def disagreements(
     session: Session, strategy: Strategy, run: Run, *, short: str, limit: int = 50
 ) -> dict[str, Any]:
     """Symbol-cycles where the shadow and live chose differently, newest
-    first, with the trade result or the 5-session outcome."""
+    first, with the trade result or the 5-session outcome.
+
+    ``better`` is "shadow", "live" or null, decided by code only where
+    exactly one side entered (docs/SPEC.md, Strategies, Who was better):
+    the side that entered is better when its trade closed above 0R, the
+    side that stayed out when it closed below. ``counts`` covers every
+    disagreement of the run, before ``limit`` trims the rows.
+    """
+    from app.engine.performance import _EXIT_LABELS
+
     start = aware(strategy_start(strategy, run.started_at))
     items: list[dict[str, Any]] = []
     sessions: set[date] = set()
+    counts = {"shadow_better": 0, "live_better": 0, "undecided": 0}
     for row, live, cycle in _paired(session, strategy.id, start):
         if not counted_pair(row, live) or _norm(row.final_action) == _norm(live.final_action):
             continue
         when = aware(cycle.scheduled_time)
         sessions.add(ny_date(when))
-        result, tone = None, "neutral"
+        result, result_text, tone = None, None, "neutral"
         trade = _shadow_trade(session, row)
+        position, live_r = _live_trade_r(session, live)
+        # Who was better: only where exactly one side entered.
+        better: str | None = None
+        if _entered(row.final_action) and not _entered(live.final_action):
+            if trade is not None and trade.status == "closed" and trade.r is not None:
+                better = (
+                    "shadow" if trade.r > 0 else "live" if trade.r < 0 else None
+                )
+        elif (
+            _entered(live.final_action)
+            and not _entered(row.final_action)
+            and position is not None
+            and position.closed_at is not None
+            and live_r is not None
+        ):
+            better = "live" if live_r > 0 else "shadow" if live_r < 0 else None
+        counts[
+            "shadow_better"
+            if better == "shadow"
+            else "live_better"
+            if better == "live"
+            else "undecided"
+        ] += 1
         if trade is not None:
             if trade.status == "closed" and trade.r is not None:
+                label = _EXIT_LABELS.get(trade.exit_reason or "", trade.exit_reason or "")
                 result = f"{short} {trade.r:+.1f}R {trade.exit_reason}"
+                result_text = f"{short}’s trade: {_signed_r(trade.r)} at the {label}"
                 tone = "positive" if trade.r > 0 else "negative"
             elif trade.status in ("open", "pending"):
                 result = f"{short} open"
+                result_text = f"{short}’s trade is open"
             else:
                 result = f"{short} not filled"
-        if result is None:
-            position, r = _live_trade_r(session, live)
-            if position is not None:
-                if position.closed_at is None:
-                    result = "live open"
-                elif r is not None:
-                    result = f"live {r:+.1f}R {position.exit_reason or ''}".rstrip()
-                    tone = "positive" if r > 0 else "negative"
+                result_text = f"{short}’s entry wasn’t filled"
+        if result is None and position is not None:
+            if position.closed_at is None:
+                result = "live open"
+                result_text = "Live’s trade is open"
+            elif live_r is not None:
+                label = _EXIT_LABELS.get(
+                    position.exit_reason or "", position.exit_reason or ""
+                )
+                result = f"live {live_r:+.1f}R {position.exit_reason or ''}".rstrip()
+                result_text = f"Live’s trade: {_signed_r(live_r)} at the {label}"
+                tone = "positive" if live_r > 0 else "negative"
         if result is None:
             outcome = session.execute(
                 select(Outcome).where(Outcome.decision_id == live.id)
@@ -405,9 +520,11 @@ def disagreements(
             ):
                 pct = (outcome.price_5sessions - Decimal(str(price))) / Decimal(str(price)) * 100
                 result = f"{pct:+.1f}% after 5 sessions"
+                result_text = f"{_signed_pct(pct)} after 5 sessions"
                 tone = "positive" if pct > 0 else "negative" if pct < 0 else "neutral"
             else:
                 result = "waiting for 5 sessions"
+                result_text = "Waiting for 5 sessions"
         items.append(
             {
                 "time": when.isoformat(),
@@ -418,12 +535,20 @@ def disagreements(
                 "shadow_action": row.final_action,
                 "shadow_label": _action_label(row.final_action, row.model_output),
                 "live_decision_id": live.id,
+                "shadow_decision_id": row.id,
                 "result": result,
+                "result_text": result_text,
+                "better": better,
                 "tone": tone,
             }
         )
     items.reverse()
-    return {"total": len(items), "sessions": len(sessions), "items": items[:limit]}
+    return {
+        "total": len(items),
+        "sessions": len(sessions),
+        "counts": counts,
+        "items": items[:limit],
+    }
 
 
 def compare(

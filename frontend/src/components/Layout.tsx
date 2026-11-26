@@ -93,6 +93,7 @@ export function Layout() {
     registerConfirmHandler((req) => {
       setConfirmReq({
         action: req.action,
+        changes: req.changes,
         resolve: (ok) => {
           req.resolve(ok);
           setConfirmReq(null);
@@ -322,7 +323,18 @@ export function Layout() {
           needsYou={needsYou}
           narrow={narrow}
         />
-        <main style={{ flex: 1, padding: 'var(--sa-space-6)', position: 'relative' }}>
+        <main
+          style={{
+            flex: 1,
+            padding: 'var(--sa-space-6)',
+            position: 'relative',
+            // design/: the page column is 1440 px including its padding.
+            maxWidth: 'var(--sa-page-max)',
+            width: '100%',
+            margin: '0 auto',
+            boxSizing: 'border-box',
+          }}
+        >
           {liveStatus === 'paused' && (
             <div
               style={{

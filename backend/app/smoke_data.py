@@ -79,7 +79,7 @@ async def run(config: AppConfig, clock: Clock) -> int:
         "; ".join(bar_errors) or None,
     )
 
-    daily = await market_data.refresh_daily(today)
+    daily = await market_data.refresh_daily(today, clock.now())
     daily_cached = sum(market_data.bars_cache.count_daily(symbol) for symbol in daily)
     daily_errors = [f"{s}: {r.error}" for s, r in daily.items() if r.error]
     failures += _line(

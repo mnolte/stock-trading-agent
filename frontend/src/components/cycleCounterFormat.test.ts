@@ -4,9 +4,10 @@ import {
   checkLabel,
   counterCountdown,
   counterTail,
+  cycleProgressLabel,
   nextCycleLabel,
+  nextCycleParts,
   runLabel,
-  todayLabel,
 } from './cycleCounterFormat';
 import type { CycleCounter } from '../types/api';
 
@@ -57,6 +58,15 @@ describe('nextCycleLabel', () => {
   });
 });
 
+describe('nextCycleParts', () => {
+  it('splits the Amsterdam time from the New York one', () => {
+    expect(nextCycleParts(counter({}))).toEqual({ when: '19:46', ny: '13:46 NY' });
+  });
+  it('is null when nothing is scheduled', () => {
+    expect(nextCycleParts(counter({ next_cycle: null }))).toBeNull();
+  });
+});
+
 describe('counterTail', () => {
   const now = new Date('2026-10-15T16:52:00Z').getTime();
   it('is "running" instead of the countdown while a cycle runs', () => {
@@ -79,27 +89,35 @@ describe('counterTail', () => {
 });
 
 describe('labels', () => {
-  it('todayLabel is "Next · cycle n of 6 today"', () => {
-    expect(todayLabel(counter({}))).toBe('Next · cycle 3 of 6 today');
-    expect(todayLabel(counter({ cycle_index: 0 }))).toBe('Next · cycle 0 of 6 today');
+  it('cycleProgressLabel counts the upcoming cycle in the session', () => {
+    // Three cycles ran, the next one is the fourth of six.
+    expect(cycleProgressLabel(counter({}))).toBe('Cycle 4 of 6 today');
+    expect(cycleProgressLabel(counter({ cycle_index: 0 }))).toBe('Cycle 1 of 6 today');
   });
-  it('todayLabel is empty on a day without a session', () => {
+  it('cycleProgressLabel is the ran count once no next cycle is today', () => {
     expect(
-      todayLabel(counter({ cycle_index: 0, cycles_today: 0, segments: [] })),
+      cycleProgressLabel(counter({ next_cycle_today: false })),
+    ).toBe('Cycle 3 of 6 today');
+  });
+  it('cycleProgressLabel is empty on a day without a session', () => {
+    expect(
+      cycleProgressLabel(counter({ cycle_index: 0, cycles_today: 0, segments: [] })),
     ).toBeNull();
   });
-  it('todayLabel drops "today" when the shown session is not today', () => {
+  it('cycleProgressLabel drops "today" when the shown session is not today', () => {
     expect(
-      todayLabel(counter({ session_is_today: false })),
-    ).toBe('Next · cycle 3 of 6');
+      cycleProgressLabel(
+        counter({ session_is_today: false, next_cycle_today: false }),
+      ),
+    ).toBe('Cycle 3 of 6');
   });
   it('runLabel is the cycle number in this run', () => {
     expect(runLabel(counter({}))).toBe('#42 this run');
     expect(runLabel(counter({ run_cycle_number: null }))).toBeNull();
     expect(runLabel(counter({ run_cycle_number: 0 }))).toBeNull();
   });
-  it('checkLabel is the next position check', () => {
-    expect(checkLabel(counter({}))).toBe('next check 19:01');
+  it('checkLabel is the next position check, Amsterdam then New York', () => {
+    expect(checkLabel(counter({}))).toBe('Position check 19:01 · 13:01 NY');
     expect(
       checkLabel(
         counter({
@@ -107,7 +125,7 @@ describe('labels', () => {
           next_check_today: false,
         }),
       ),
-    ).toBe('next check Mon 15:46');
+    ).toBe('Position check Mon 15:46 · 09:46 NY');
     expect(checkLabel(counter({ next_check: null }))).toBeNull();
   });
 });

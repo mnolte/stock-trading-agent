@@ -33,6 +33,8 @@ from app.ask.tools import TOOLS, AskDeps, run_tool, step_label
 from app.data.cache import _naive_utc
 from app.db.models import AskMessage, AskThread, LlmCall
 from app.decide.prompt import cached_prompt
+from app.errors import safe_error
+from app.inspector.attention import attention_for_call
 from app.inspector.record import build_llm_call
 from app.llm.base import (
     ConverseMessage,
@@ -40,6 +42,7 @@ from app.llm.base import (
     ModelClient,
     ModelResponse,
     converse_cost,
+    response_cache_saving,
 )
 from app.secrets_service import scrub
 
@@ -387,7 +390,9 @@ async def answer(
                     stopped = True
                     break
         except Exception as exc:  # noqa: BLE001
-            failed, error_text = True, str(exc)
+            failed, error_text = True, safe_error(
+                exc, extra=scrub_values() if scrub_values else ()
+            )
         if stopped:
             break
         if result is None:
@@ -431,9 +436,11 @@ async def answer(
                 prompt_version=prompt.version,
                 prompt_hash=prompt.sha256,
                 cost=call_cost,
+                cache_saved=response_cache_saving(shim, config),
                 scrub_values=scrub_values,
             )
             row.ask_message_id = message_id
+            row.attention = attention_for_call(session, row)
             session.add(row)
             session.commit()
         if result.tokens_in:
@@ -508,7 +515,14 @@ async def answer(
     with session_factory() as session:
         msg = session.get(AskMessage, message_id)
         if msg is not None:
-            msg.text = display
+            # Second line for the answer text itself (item 105): the
+            # model never sees a key, but a stored row gets the same
+            # scrub as every other persisted string.
+            msg.text = (
+                scrub(display, scrub_values() if scrub_values else [])
+                if display
+                else display
+            )
             msg.steps = steps
             msg.references = used_refs
             msg.unverified_numbers = unverified or None

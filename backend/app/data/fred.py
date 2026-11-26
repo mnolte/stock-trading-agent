@@ -17,6 +17,7 @@ from decimal import Decimal, InvalidOperation
 import httpx
 
 from app.data.models import DataResult, VixObservation
+from app.errors import safe_error
 from app.market.clock import Clock, RealClock
 
 
@@ -111,13 +112,15 @@ class FredVixSource:
             return await self._fetch_csv(start, end)
         except Exception as exc:  # noqa: BLE001 - the keyed path is the fallback
             if not self._api_key:
-                return DataResult(data=[], error=str(exc), source="fred")
+                return DataResult(data=[], error=safe_error(exc), source="fred")
             try:
                 return await self._fetch_api(start, end)
             except Exception as api_exc:  # noqa: BLE001
                 return DataResult(
                     data=[],
-                    error=f"csv: {exc}; api: {api_exc}",
+                    error=safe_error(
+                        f"csv: {exc}; api: {api_exc}", extra=[self._api_key]
+                    ),
                     source="fred",
                 )
 
@@ -133,7 +136,7 @@ class FredVixSource:
             end = self._clock.now().date()
             result = await self._fetch_api(end - timedelta(days=10), end)
         except Exception as exc:  # noqa: BLE001
-            return str(exc)
+            return safe_error(exc, extra=[self._api_key])
         if result.error is not None:
             return result.error
         if not result.data:
@@ -184,7 +187,11 @@ class FredReleaseSource:
             response.raise_for_status()
             payload = json.loads(response.text)
         except Exception as exc:  # noqa: BLE001 - reported as a missing calendar
-            return DataResult(data=[], error=str(exc), source="fred")
+            return DataResult(
+                data=[],
+                error=safe_error(exc, extra=[self._api_key]),
+                source="fred",
+            )
         days: list[date] = []
         for row in payload.get("release_dates") or []:
             if not isinstance(row, dict):

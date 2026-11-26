@@ -33,6 +33,7 @@ from app.data.models import (
     Quote,
 )
 from app.data.rate_limiter import RateLimiter
+from app.errors import safe_error
 from app.market.clock import NY_TZ, UTC, Clock, RealClock
 
 logger = logging.getLogger(__name__)
@@ -41,13 +42,14 @@ logger = logging.getLogger(__name__)
 # urllib3 pool keeps 10 connections per host. The daily-bar refresh and
 # the universe screen already run 10 reads at once, so any overlapping
 # call overflowed the pool ("Connection pool is full, discarding
-# connection"). 20 leaves headroom for concurrent cycles.
+# connection"). Item 078 sizes the pool to ``max(max_requests, 20)`` per
+# host; 20 stays the floor.
 _HTTP_POOL_MAXSIZE = 20
 
 
-def _mount_pool(client: RESTClient) -> None:
+def _mount_pool(client: RESTClient, maxsize: int) -> None:
     """Widen the client's urllib3 per-host pool (default 10)."""
-    client._session.mount("https://", HTTPAdapter(pool_maxsize=_HTTP_POOL_MAXSIZE))
+    client._session.mount("https://", HTTPAdapter(pool_maxsize=maxsize))
 
 
 def _parse_timestamp(value: Any) -> datetime:
@@ -222,7 +224,7 @@ def parse_clock(raw: dict[str, Any]) -> MarketClock:
     )
 
 
-_DIVIDEND_KEYS = ("cash_dividends", "stock_dividends")
+_DIVIDEND_KEYS = {"cash_dividends": "dividend", "stock_dividends": "stock_dividend"}
 _SPLIT_KEYS = ("forward_splits", "reverse_splits", "unit_splits")
 
 
@@ -234,7 +236,7 @@ def parse_corporate_actions(
     grouped = raw.get("corporate_actions", {})
     for key, rows in grouped.items():
         if key in _DIVIDEND_KEYS:
-            action_type = "dividend"
+            action_type = _DIVIDEND_KEYS[key]
         elif key in _SPLIT_KEYS:
             action_type = "split"
         else:
@@ -245,7 +247,7 @@ def parse_corporate_actions(
                 ex_date = date.fromisoformat(ex_date)
             if ex_date is None:
                 continue
-            amount = row.get("rate") if action_type == "dividend" else row.get("ratio")
+            amount = row.get("rate") if action_type != "split" else row.get("ratio")
             actions.append(
                 CorporateActionEvent(
                     symbol=str(row.get("symbol", "")),
@@ -272,11 +274,13 @@ class AlpacaDataClient:
         rate_limiter: RateLimiter | None = None,
         clock: Clock | None = None,
         adjustment: str = "split",
+        http_pool_size: int | None = None,
     ) -> None:
         self.limiter = rate_limiter or RateLimiter()
         self.clock = clock or RealClock()
         # All bar requests use the configured price adjustment (spec: split).
         self.adjustment = Adjustment(adjustment)
+        self._pool_size = http_pool_size or _HTTP_POOL_MAXSIZE
         self.update_credentials(api_key, secret_key)
 
     def update_credentials(self, api_key: str, secret_key: str) -> None:
@@ -294,7 +298,7 @@ class AlpacaDataClient:
             self.news,
             self.corporate_actions,
         ):
-            _mount_pool(client)
+            _mount_pool(client, self._pool_size)
 
     async def check_paper_account(self) -> DataResult[dict[str, Any]]:
         try:
@@ -312,7 +316,7 @@ class AlpacaDataClient:
                 )
             return DataResult(data=data, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data={}, error=str(exc), source="alpaca")
+            return DataResult(data={}, error=safe_error(exc), source="alpaca")
 
     async def fetch_calendar(
         self, start: date, end: date
@@ -325,7 +329,7 @@ class AlpacaDataClient:
             rows = list(raw) if isinstance(raw, list) else []
             return DataResult(data=parse_calendar(rows), source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")
 
     async def fetch_clock(self) -> DataResult[MarketClock | None]:
         try:
@@ -340,7 +344,7 @@ class AlpacaDataClient:
             )
             return DataResult(data=clock, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="alpaca")
+            return DataResult(data=None, error=safe_error(exc), source="alpaca")
 
     async def fetch_5m_bars(
         self, symbols: list[str], start: datetime, end: datetime
@@ -370,7 +374,7 @@ class AlpacaDataClient:
             ]
             return DataResult(data=bars, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")
 
     async def fetch_daily_bars(
         self, symbol: str, start: date, end: date
@@ -397,7 +401,7 @@ class AlpacaDataClient:
             raw_bars = dict(raw) if isinstance(raw, dict) else {}
             return DataResult(data=parse_daily_bars(raw_bars, symbol), source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")
 
     async def fetch_quotes(
         self, symbols: list[str]
@@ -418,7 +422,7 @@ class AlpacaDataClient:
                 source="alpaca",
             )
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data={}, error=str(exc), source="alpaca")
+            return DataResult(data={}, error=safe_error(exc), source="alpaca")
 
     async def fetch_news(
         self, symbols: list[str], start: datetime, end: datetime
@@ -461,14 +465,27 @@ class AlpacaDataClient:
         self, symbols: list[str], start: date, end: date
     ) -> DataResult[list[CorporateActionEvent]]:
         try:
+            # limit=None makes the SDK page until next_page_token is
+            # empty — the default 1000 stops at 1,000 actions in total
+            # (item 108). Paging happens inside this one limiter slot.
             raw = await self.limiter.run_read(
                 self.corporate_actions.get_corporate_actions,
-                CorporateActionsRequest(symbols=symbols, start=start, end=end),
+                CorporateActionsRequest(
+                    symbols=symbols, start=start, end=end, limit=None
+                ),
             )
             ca_raw = dict(raw) if isinstance(raw, dict) else {}
+            if ca_raw.get("next_page_token"):
+                # A short list would make refresh_corporate_actions
+                # prune real rows it never saw — fail instead.
+                return DataResult(
+                    data=[],
+                    error="corporate actions truncated",
+                    source="alpaca",
+                )
             return DataResult(
                 data=parse_corporate_actions(ca_raw, self.clock.now()),
                 source="alpaca",
             )
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")

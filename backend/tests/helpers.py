@@ -323,3 +323,9 @@ def sign_in(
 
 def csrf_headers(client: TestClient) -> dict[str, str]:
     return {"X-CSRF-Token": client.cookies.get("sa_csrf") or ""}
+
+
+def public_resolver(host: str, *_a: Any) -> list[Any]:
+    """``socket.getaddrinfo``-shaped fake answering one public address —
+    the outbound-address checks (item 085) never touch DNS in tests."""
+    return [(0, 0, 0, "", ("93.184.216.34", 0))]

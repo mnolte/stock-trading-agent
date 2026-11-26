@@ -5,18 +5,19 @@
 # the bind address is SA_HOST/SA_PORT (never bind flags anywhere).
 
 ######################## frontend build ########################
-FROM node:22-alpine AS frontend
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS frontend
 WORKDIR /fe
-RUN corepack enable
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+COPY frontend/package.json ./
+RUN npm install -g "pnpm@$(node -p "require('./package.json').packageManager.split('@').pop()")"
+COPY frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --allow-build=esbuild
 COPY frontend/ ./
 RUN pnpm build
 
 ######################## python deps ########################
-FROM python:3.12-slim AS deps
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS deps
 WORKDIR /srv
-RUN pip install --no-cache-dir "uv>=0.9,<1"
+RUN pip install --no-cache-dir "uv==0.13.7"
 COPY pyproject.toml uv.lock ./
 # --no-emit-project: the app runs from the source tree at /srv/backend so
 # app.config.ROOT keeps pointing at the layout it expects (.env, prompts,
@@ -34,6 +35,8 @@ RUN uv export --frozen --no-emit-project --extra dev --format requirements-txt \
     && uv pip install --python /opt/venv/bin/python --no-cache \
         -r /tmp/requirements-dev.txt
 COPY backend/ /srv/backend/
+# scripts/coverage_summary.py is exercised by backend/tests/.
+COPY scripts/ /srv/scripts/
 COPY --from=frontend /fe/dist /srv/frontend/dist
 ENV PYTHONPATH=/srv/backend \
     PYTHONDONTWRITEBYTECODE=1
@@ -55,7 +58,7 @@ CMD ["/opt/venv/bin/python", "-m", "pytest", "backend/tests", \
      "--deselect", "backend/tests/test_shutdown.py::test_lock_recycled_pid_is_stale"]
 
 ######################## runtime ########################
-FROM python:3.12-slim AS runtime
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TZ=Europe/Amsterdam \
@@ -78,7 +81,11 @@ COPY --from=deps /opt/venv /opt/venv
 COPY pyproject.toml /srv/pyproject.toml
 COPY backend/ /srv/backend/
 COPY --from=frontend /fe/dist /srv/frontend/dist
-RUN chown -R stockagent:stockagent /srv /data
+# Item 084: the runtime image ships no tests or eval data (the test
+# stage above keeps them), and /srv belongs to root — world-readable,
+# not writable by the app user. Everything writable lives on /data.
+RUN rm -rf /srv/backend/tests /srv/backend/eval \
+    && chown -R root:root /srv && chmod -R a+rX /srv
 USER stockagent
 WORKDIR /srv/backend
 ENV PYTHONPATH=/srv/backend

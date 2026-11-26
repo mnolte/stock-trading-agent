@@ -8,6 +8,10 @@ import { Chip } from './Chip';
 import { SkeletonText } from './skeletons';
 import { formatCost } from './decisionFormat';
 import { displayWeekdayDateTime } from '../format';
+import { NumbersFold } from './NumbersFold';
+import { StatusLine } from './StatusLine';
+import { StoryText } from './StoryText';
+import { isStoryVersion } from '../pages/reviewsFormat';
 
 /** "Fri 16 Oct 15:00" — next write instant, Amsterdam time. */
 const nextLabel = displayWeekdayDateTime;
@@ -22,7 +26,7 @@ function chipVariant(tone: ChipData['tone']) {
  * Today's briefing once its slot has passed, the previous one with its
  * date before that; "off" with a Settings link when briefings are off.
  */
-export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
+export function BriefingCard({ res, id }: { res: Resource<DashboardResponse>; id?: string }) {
   const briefing = res.data?.briefing ?? null;
   const card = briefing?.card ?? null;
   const enabled = briefing?.enabled ?? true;
@@ -30,19 +34,21 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
   const title = card ? `Daily briefing · ${card.today ? card.time : card.label}` : 'Daily briefing';
   return (
     <section
+      id={id}
       aria-label="Daily briefing"
       aria-busy={res.loading || res.refreshing || undefined}
       style={{
         position: res.refreshing ? 'relative' : undefined,
         flex: '999 1 460px',
+        scrollMarginTop: 16,
         minWidth: 0,
         background: 'var(--sa-panel)',
         border: '1px solid var(--sa-border)',
         borderRadius: 'var(--sa-radius-lg)',
-        padding: 'var(--sa-space-4) var(--sa-space-5)',
+        padding: '20px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 'var(--sa-space-3)',
+        gap: '14px',
         boxSizing: 'border-box',
       }}
     >
@@ -60,7 +66,7 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
         <h2
           style={{
             margin: 0,
-            fontSize: 'var(--sa-text-sm)',
+            fontSize: 'var(--sa-text-md)',
             fontWeight: 600,
             color: 'var(--sa-text-2)',
             textTransform: 'uppercase',
@@ -93,20 +99,56 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
                 {next ? ` — the next is written ${next}` : ''}.
               </p>
             )}
-            {enabled && card !== null && (
+            {enabled && card !== null && isStoryVersion(card.prompt_version) && (
               <>
-                {card.status_line && (
-                  <p
+                {card.status_line && <StatusLine text={card.status_line} />}
+                <StoryText text={card.text} glossary={card.glossary} />
+                <NumbersFold
+                  rows={card.numbers ?? []}
+                  factCount={card.fact_count}
+                />
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    gap: '6px 16px',
+                    paddingTop: 'var(--sa-space-3)',
+                    borderTop: '1px solid var(--sa-border)',
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-muted)',
+                  }}
+                >
+                  <span
+                    title={
+                      card.source === 'model'
+                        ? 'Every number in the story was checked against the facts code computed before the open. Underlined words are explained on hover or tap. Written once; what changed since is in the cards around it.'
+                        : 'Built from the same figures with the plain template. Things that changed since are in the cards around it.'
+                    }
                     style={{
-                      margin: 0,
-                      lineHeight: 1.5,
-                      fontSize: 'var(--sa-text-sm)',
-                      color: 'var(--sa-text-muted)',
+                      color: card.source === 'model' ? 'var(--sa-positive)' : undefined,
+                      textDecoration: 'underline dotted',
+                      textUnderlineOffset: '3px',
+                      cursor: 'help',
                     }}
                   >
-                    {card.status_line}
-                  </p>
-                )}
+                    {card.source === 'model'
+                      ? 'Numbers checked ✓'
+                      : `Plain briefing: ${card.reason ?? 'template used'}`}
+                  </span>
+                  {next && <span>Next briefing {next}</span>}
+                  <span style={{ flex: 1 }} />
+                  <span>
+                    {card.source === 'model' ? card.model ?? 'model' : 'template'}
+                    {card.prompt_version ? ` · ${card.prompt_version}` : ''}
+                    {card.cost !== null ? ` · ${formatCost(card.cost)}` : ''}
+                  </span>
+                </div>
+              </>
+            )}
+            {enabled && card !== null && !isStoryVersion(card.prompt_version) && (
+              <>
+                {card.status_line && <StatusLine text={card.status_line} />}
                 <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
                   {card.text}
                 </p>

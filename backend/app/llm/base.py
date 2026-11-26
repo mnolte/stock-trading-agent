@@ -206,6 +206,51 @@ def _usage_cost(
     ) / Decimal(1_000_000)
 
 
+def cache_saving(
+    table: dict[str, Any],
+    model: str,
+    cached_in: int,
+    cache_write_in: int,
+) -> Decimal | None:
+    """USD the prompt cache saved on one call; None without a price.
+
+    ``(cached × (input − cached_input) − write × (cache_write − input))
+    ÷ 1,000,000`` at the model's prices; ``cached_input`` and
+    ``cache_write`` fall back to the input price, so a model without
+    them saves nothing on reads and pays the write premium on writes —
+    the saving can be negative (docs/SPEC.md → Insights → Model costs).
+    """
+    price = model_price(table, model)
+    if price is None:
+        return None
+    in_price, _out_price = price
+    entry = table.get(model) or {}
+    cached_price = Decimal(str(entry.get("cached_input", in_price)))
+    write_price = Decimal(str(entry.get("cache_write", in_price)))
+    return (
+        Decimal(cached_in) * (in_price - cached_price)
+        - Decimal(cache_write_in) * (write_price - in_price)
+    ) / Decimal(1_000_000)
+
+
+def response_cache_saving(
+    response: ModelResponse, config: AppConfig, *, model: str | None = None
+) -> Decimal | None:
+    """``cache_saving`` for one response; None when the provider sent no
+    cache split (a row written before item 109 stays NULL, not $0)."""
+    if (
+        response.cached_tokens_in is None
+        and response.cache_write_tokens_in is None
+    ):
+        return None
+    return cache_saving(
+        models_table(config),
+        model or response.model,
+        response.cached_tokens_in or 0,
+        response.cache_write_tokens_in or 0,
+    )
+
+
 def token_cost(
     response: ModelResponse, config: AppConfig, *, model: str | None = None
 ) -> Decimal | None:

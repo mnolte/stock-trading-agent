@@ -3,6 +3,7 @@
 from collections.abc import Generator
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from app.db.base import get_session_maker
@@ -364,20 +365,31 @@ def test_performance_endpoint(client: TestClient, clean_performance: None) -> No
     assert regime["Up · normal vol"]["trades"] == 1
     assert regime["Up · normal vol"]["pnl"] == "40.00"
     assert regime["Down · normal or low"]["trades"] == 1
-    assert regime["Sideways · any"]["trades"] == 0
-    assert regime["Sideways · any"]["pnl"] is None
+    # Item 076: regimes without trades fold into one line, not rows.
+    assert "Sideways · any" not in regime
+    assert body["empty_regimes"] == [
+        "Up · high vol",
+        "Up · low vol",
+        "Sideways · any",
+        "Down · high vol",
+    ]
 
     rows = {row["key"]: row for row in body["decision_outcomes"]}
     assert rows["enter"]["count"] == 3
     assert "1 not filled" in rows["enter"]["read"]
     # MSFT +5.0%, XOM −1.0%, GOOGL +0.2353% → avg ≈ 1.41
     assert rows["enter"]["avg_1session_pct"] is not None
+    assert rows["enter"]["first_price_date"] is None
     assert rows["skip"]["count"] == 1
     assert rows["skip"]["read"].startswith("skipped setups")
     assert rows["no_call"]["count"] == 1
     assert rows["no_call"]["read"] == "no model call"
     assert rows["invalid"]["count"] == 1
     assert rows["invalid"]["read"] == "treated as skip"
+    # AAPL's outcome has no 1-session price: the first lands on the next
+    # trading session after its Oct 13 decision (same NY time).
+    assert rows["invalid"]["avg_1session_pct"] is None
+    assert rows["invalid"]["first_price_date"] == "2026-10-14"
 
     trades = body["closed_trades"]
     assert len(trades) == 2
@@ -393,6 +405,27 @@ def test_performance_endpoint(client: TestClient, clean_performance: None) -> No
 
     assert body["open"]["count"] == 1
     assert body["open"]["symbols"] == ["JPM"]
+
+    # Item 076: the summary sentence, exits on the curve and the
+    # deepest drawdown span.
+    assert summary["sentence"].startswith(
+        "In 4 sessions the agent closed 2 trades and won 1."
+    )
+    assert "against SPY's" in summary["sentence"]
+    assert summary["sentence"].endswith("1 position is still open (JPM).")
+    assert summary["tail_min_trades"] == 20
+
+    exits = {(e["symbol"], e["date"]): e for e in body["exits"]}
+    assert exits[("MSFT", "2026-10-14")]["r"] == "1.00"
+    assert exits[("MSFT", "2026-10-14")]["won"] is True
+    assert exits[("XOM", "2026-10-14")]["r"] == "-3.00"
+    assert exits[("XOM", "2026-10-14")]["won"] is False
+
+    dd = body["drawdown"]
+    # 10120 on the 13th to 10100 on the 14th is the deepest fall.
+    assert dd["peak_date"] == "2026-10-13"
+    assert dd["low_date"] == "2026-10-14"
+    assert Decimal(dd["pct"]) == Decimal(summary["max_drawdown_pct"])
 
     # Adjusted total: return − fill slippage + dividends.
     # Fills: 4×100 + 4×110 + 2×200 + 2×185 → 1610 × 0.05% = 0.805.
@@ -415,6 +448,75 @@ def test_performance_unknown_run_404s(
 ) -> None:
     _seed()
     assert client.get("/api/performance?run=99999").status_code == 404
+
+
+def test_summary_sentence_branches() -> None:
+    """One branch per wording case (item 076): no trades, losing,
+    winning, ahead of or behind SPY."""
+    from app.engine.performance import summary_sentence
+
+    base: dict[str, Any] = {
+        "sessions": 9,
+        "closed": 6,
+        "wins": 4,
+        "adjusted_usd": Decimal("171.86"),
+        "adjusted_pct": Decimal("1.70"),
+        "return_pct": Decimal("1.84"),
+        "spy_return_pct": Decimal("1.21"),
+        "open_count": 2,
+        "open_symbols": ["MSFT", "JPM"],
+    }
+    s = summary_sentence(**base)
+    assert s == (
+        "In 9 sessions the agent closed 6 trades and won 4. "
+        "After costs it is up $171.86 (+1.70%), and the account is "
+        "+1.84% against SPY's +1.21% over the same days. "
+        "2 positions are still open (MSFT, JPM)."
+    )
+
+    # Losing, behind SPY, nothing open.
+    s = summary_sentence(
+        **{
+            **base,
+            "adjusted_usd": Decimal("-22.38"),
+            "adjusted_pct": Decimal("-0.22"),
+            "return_pct": Decimal("-0.20"),
+            "spy_return_pct": Decimal("0.50"),
+            "open_count": 0,
+            "open_symbols": [],
+        }
+    )
+    assert "it is down $22.38 (−0.22%)" in s
+    assert "−0.20% against SPY's +0.50%" in s
+    assert "still open" not in s
+
+    # Winning and ahead of SPY.
+    s = summary_sentence(
+        **{
+            **base,
+            "return_pct": Decimal("2.50"),
+            "spy_return_pct": Decimal("1.00"),
+        }
+    )
+    assert "+2.50% against SPY's +1.00%" in s
+
+    # No trades yet.
+    s = summary_sentence(
+        **{
+            **base,
+            "closed": 0,
+            "wins": 0,
+            "adjusted_usd": Decimal("0"),
+            "adjusted_pct": Decimal("0"),
+        }
+    )
+    assert s.startswith("In 9 sessions the agent has not closed a trade yet.")
+    assert "it is flat at $0.00 (0.00%)" in s
+
+    # No SPY baseline.
+    s = summary_sentence(**{**base, "spy_return_pct": None})
+    assert "since the start." in s
+    assert "SPY" not in s.split("After costs")[1]
 
 
 def test_decision_category_model_error_beats_invalid() -> None:

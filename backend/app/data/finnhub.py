@@ -8,6 +8,7 @@ from typing import Any
 import finnhub
 
 from app.data.models import DataResult, EarningsEvent, normalise_earnings_hour
+from app.errors import safe_error
 from app.logging_config import ev
 from app.market.clock import Clock, RealClock
 
@@ -28,11 +29,13 @@ class FinnhubEarningsSource:
     """Finnhub earnings calendar (/calendar/earnings)."""
 
     def __init__(self, api_key: str, clock: Clock | None = None) -> None:
+        self._api_key = api_key
         self._client = finnhub.Client(api_key=api_key)
         self._clock = clock or RealClock()
 
     def update_key(self, api_key: str) -> None:
         """Swap the key in place after a Settings save."""
+        self._api_key = api_key
         self._client = finnhub.Client(api_key=api_key)
 
     async def fetch_earnings(
@@ -61,7 +64,11 @@ class FinnhubEarningsSource:
                 chunk = chunk_end + timedelta(days=1)
             return DataResult(data=events, source="finnhub")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="finnhub")
+            return DataResult(
+                data=[],
+                error=safe_error(exc, extra=[self._api_key]),
+                source="finnhub",
+            )
 
     async def _fetch_chunk(
         self,

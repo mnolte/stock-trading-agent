@@ -45,6 +45,7 @@ jobs:
     permissions:
       contents: read
       packages: write # push the image — the only job that needs it
+      id-token: write # keyless cosign signing of the pushed image
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -60,6 +61,7 @@ jobs:
           tags: |
             type=raw,value={{tag}}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: build
         with:
           context: .
           target: runtime
@@ -68,3 +70,18 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Item 084: the server runs exactly this image — sign it keyless
+      # (GitHub's OIDC identity) so deploy.sh can verify before pulling.
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Sign the image
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/stock-agent
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          {
+            echo "### Signed image"
+            echo
+            echo "- tag: \`${{ github.ref_name }}\`"
+            echo "- image: \`${IMAGE}@${DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

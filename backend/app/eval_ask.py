@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from app.data.cache import _naive_utc
+from app.errors import safe_error
 
 FIXED_NOW = datetime(2026, 10, 15, 14, 0, tzinfo=UTC)
 
@@ -150,7 +151,7 @@ async def _main(model: str, file: Path) -> int:
             default_model=model,
         )
     except Exception as exc:  # noqa: BLE001
-        print(f"cannot create client for {model}: {exc}")
+        print(f"cannot create client for {model}: {safe_error(exc)}")
         return 2
     deps = AskDeps(
         config=config,
@@ -164,7 +165,7 @@ async def _main(model: str, file: Path) -> int:
         try:
             r = await _run_question(q, deps, clients, get_session_maker())
         except Exception as exc:  # noqa: BLE001  # noqa: BLE001 - eval keeps going
-            r = {"q": q["q"], "error": str(exc), "passed": False}
+            r = {"q": q["q"], "error": safe_error(exc), "passed": False}
         results.append(r)
         total_cost += Decimal(r.get("cost") or 0)
         mark = "PASS" if r.get("passed") else "FAIL"

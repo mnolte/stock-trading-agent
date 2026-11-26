@@ -92,7 +92,8 @@ async def test_briefing_report_four_rejects_known_empty_as_unavailable(
     assert review is not None
     assert review.source == "template"
     assert review.reason == "fact check failed"
-    assert review.text.startswith("Positions: none.")
+    # weekly/briefing v3 (item 079): the fallback is the prose template.
+    assert "no positions are open" in review.text
     detail = str(
         (_fallback_events(session_factory)[0].details or {}).get("detail", "")
     )
@@ -562,8 +563,7 @@ async def test_fallback_on_number_check(
         _seed_week(session)
         session.commit()
     invented: dict[str, object] = {
-        "summary": "Return +9.99%, an invented figure.",
-        "observations": [],
+        "story": "Return +9.99%, an invented figure.",
         "suggestion": None,
     }
     service = _service(
@@ -700,9 +700,9 @@ async def test_model_text_passes_number_check(
     assert review.source == "model"
     assert review.reason is None
     assert review.model == "gpt-4o-mini"
-    assert review.prompt_version == "weekly.v2"
+    assert review.prompt_version == "weekly.v3"
     assert review.cost is not None
-    assert (review.content or {})["summary"] == review.text
+    assert (review.content or {})["story"] == review.text
     # A caught-up/scheduled write keeps the Saturday slot as due_at.
     assert review.due_at == _naive(SATURDAY)
 
@@ -944,6 +944,113 @@ async def test_verdict_for_enter_uses_first_touch(
     verdict = _verdicts(session_factory)[0]
     assert verdict.verdict == "good_call"  # target touched first
     assert verdict.reason is not None and "target" in verdict.reason
+
+
+def _seed_blocked_decision(
+    session: Session, scheduled_utc: datetime, *, detail: str
+) -> Decision:
+    """A model enter code blocked at the gate: change_reason and
+    change_text come from the failed check, like a shock_brake block."""
+    decision = _seed_decision(
+        session,
+        scheduled_utc,
+        symbol="NEE",
+        final_action="blocked",
+        price=88.0,
+    )
+    decision.model_output = {"action": "enter", "confidence": 0.6}
+    decision.validation_result = {
+        "valid": True,
+        "model_action": "enter",
+        "final_action": "blocked",
+        "changed_by_code": True,
+        "reason": "shock_brake",
+    }
+    decision.gates_result = {
+        "allowed": False,
+        "blocked_by": "shock_brake",
+        "checks": [
+            {"name": "shock_brake", "passed": False, "detail": detail}
+        ],
+    }
+    return decision
+
+
+async def test_verdict_number_check_allows_change_text_numbers(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A verdict quoting the gate detail's number — "1.5%" from the
+    code-written "1.50%" — cites a fact it was given; the number check
+    must not fail it (item 091)."""
+    now = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+    with session_factory() as session:
+        decision = _seed_blocked_decision(
+            session,
+            _ny(date(2026, 11, 5)),
+            detail="SPY fell past 1.50% last hour",
+        )
+        outcome = session.execute(
+            select(Outcome).where(Outcome.decision_id == decision.id)
+        ).scalar_one()
+        outcome.price_5sessions = Decimal("86.26")
+        outcome.price_5sessions_at = _naive(_ny(date(2026, 11, 12)))
+        session.commit()
+
+    reply = json.dumps(
+        {
+            "reason": "Model entered on A; code blocked it "
+            "(SPY fell past 1.5% last hour); no trade.",
+            "thesis_check": "consistent",
+            "contradiction": None,
+        }
+    )
+    service = _service(
+        session_factory,
+        FakeClock(now),
+        client=FakeReviewClient(handler=lambda _s, _u: reply),
+    )
+    assert await service.write_due_verdicts() == 1
+    verdict = _verdicts(session_factory)[0]
+    assert verdict.draft_source == "model"
+    assert "1.5%" in (verdict.reason or "")
+
+
+async def test_verdict_number_check_still_rejects_invented_numbers(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The allowance covers only numbers inside change_text — an
+    invented figure still falls back to the plain template."""
+    now = datetime(2026, 11, 12, 12, 0, tzinfo=UTC)
+    with session_factory() as session:
+        decision = _seed_blocked_decision(
+            session,
+            _ny(date(2026, 11, 5)),
+            detail="SPY fell past 1.50% last hour",
+        )
+        outcome = session.execute(
+            select(Outcome).where(Outcome.decision_id == decision.id)
+        ).scalar_one()
+        outcome.price_5sessions = Decimal("86.26")
+        outcome.price_5sessions_at = _naive(_ny(date(2026, 11, 12)))
+        session.commit()
+
+    reply = json.dumps(
+        {
+            "reason": "Model entered on A; code blocked it "
+            "(SPY fell past 9.9% last hour); no trade.",
+            "thesis_check": "consistent",
+            "contradiction": None,
+        }
+    )
+    service = _service(
+        session_factory,
+        FakeClock(now),
+        client=FakeReviewClient(handler=lambda _s, _u: reply),
+    )
+    assert await service.write_due_verdicts() == 1
+    verdict = _verdicts(session_factory)[0]
+    assert verdict.draft_source == "template"
+    assert verdict.draft_reason == "number check failed"
 
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ from app.decide.client import DecisionClient, token_cost
 from app.decide.output import ValidationResult, validate_model_output
 from app.decide.prompt import cached_prompt
 from app.decide.snapshot import build_input_snapshot, strip_internal
+from app.errors import safe_error
 from app.llm.clients import make_model_clients
 from app.market.calendar import WeekdayCalendarProvider
 from app.market.clock import NY_TZ, Clock, make_clock
@@ -244,7 +245,7 @@ def main() -> int:
     try:
         return asyncio.run(run(symbol, config, client, make_clock(config)))
     except ValueError as exc:
-        print(f"smoke-decision: {exc}")
+        print(f"smoke-decision: {safe_error(exc)}")
         return 2
 
 

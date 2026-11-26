@@ -7,9 +7,9 @@ ALEMBIC := .venv/bin/alembic
 RUFF := .venv/bin/ruff
 MYPY := .venv/bin/mypy
 PYTEST := .venv/bin/pytest
-# pytest-xdist workers for the parallel suites; cap on small machines:
-# make test-backend TEST_WORKERS=4
-TEST_WORKERS ?= auto
+# pytest-xdist workers for the parallel suites; CI passes TEST_WORKERS=auto
+# (every core) and override locally: make test-backend TEST_WORKERS=8
+TEST_WORKERS ?= 4
 PNPM := $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 FE := cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM)
 
@@ -87,6 +87,10 @@ test: test-backend test-perf test-frontend test-e2e ## pytest + Vitest (+ Playwr
 eval-ask:
 	cd backend && ../.venv/bin/python -m app.eval_ask --model "$(MODEL)"
 
+eval-reviews: ## run the review-story eval: make eval-reviews PROMPTS=briefing.v3,weekly.v3 [MODEL=]
+	cd backend && ../.venv/bin/python -m app.eval_reviews \
+		--prompts $(PROMPTS) $(if $(MODEL),--model $(MODEL),)
+
 test-backend:
 	cd backend && ../$(PYTEST) -v -m "not slow and not perf" -n $(TEST_WORKERS) --dist worksteal --durations=15
 
@@ -97,7 +101,7 @@ test-slow: ## pytest -m slow (multi-minute tests, e.g. the 3-month replay)
 	cd backend && ../$(PYTEST) -v -m slow -n $(TEST_WORKERS) --dist worksteal --durations=15
 
 test-frontend:
-	$(FE) test
+	$(FE) test $(VITEST_ARGS)
 
 test-e2e:
 	@if ls "$$HOME"/.cache/ms-playwright/chromium* >/dev/null 2>&1; then \

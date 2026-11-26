@@ -45,6 +45,7 @@ function callRow(partial: Partial<LlmCallRow>): LlmCallRow {
     latency_ms: 1500,
     final_action: 'skip',
     outcome: 'success',
+    attention: 'none',
     reasons: [],
     error_type: null,
     http_status: null,

@@ -56,7 +56,7 @@ const facts = (over: Partial<WeeklyFacts>): WeeklyFacts =>
     ...over,
   }) as WeeklyFacts;
 
-const review = (f: WeeklyFacts): ReviewDetail => ({
+const review = (f: WeeklyFacts, over: Partial<ReviewDetail> = {}): ReviewDetail => ({
   id: 1,
   kind: 'weekly',
   period: '2026-W41',
@@ -74,16 +74,17 @@ const review = (f: WeeklyFacts): ReviewDetail => ({
   status_line: null,
   tokens: null,
   cost: null,
+  ...over,
 });
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
 
-async function render(f: WeeklyFacts) {
+async function render(f: WeeklyFacts, over: Partial<ReviewDetail> = {}) {
   await act(async () => {
     root.render(
       <MemoryRouter>
-        <WeeklyView review={review(f)} />
+        <WeeklyView review={review(f, over)} />
       </MemoryRouter>,
     );
   });
@@ -128,5 +129,39 @@ describe('WeeklyView facts.trades', () => {
     );
     expect(container.textContent).toContain('MSFT');
     expect(container.textContent).toContain('target');
+  });
+});
+
+describe('WeeklyView stories (item 079)', () => {
+  it('renders the v3 story paragraphs instead of the summary', async () => {
+    await render(
+      facts({ glossary: { R: 'What a trade risks.' } }),
+      {
+        prompt_version: 'weekly.v3',
+        content: {
+          story: 'The account rose on a quiet week.\n\nEach trade risked one R.',
+          suggestion: null,
+        },
+      },
+    );
+    expect(container.textContent).toContain('The account rose on a quiet week.');
+    expect(container.textContent).toContain('Each trade risked one R.');
+    // The glossary term is an annotated button.
+    expect(container.querySelector('button.sa-term')?.textContent).toBe('R');
+    // The story replaced the "Facts used"-style single paragraph — no
+    // legacy summary text.
+    expect(container.textContent).not.toContain('Week 41 summary.');
+    // The numbers stay on screen as tiles under the fold label.
+    expect(container.textContent).toContain('The numbers');
+    expect(container.textContent).toContain('Return');
+  });
+
+  it('keeps the v2 summary rendering for older versions', async () => {
+    await render(facts({}), {
+      prompt_version: 'weekly.v2',
+      content: { summary: 'Old style summary.', observations: [], suggestion: null },
+    });
+    expect(container.textContent).toContain('Old style summary.');
+    expect(container.querySelector('button.sa-term')).toBeNull();
   });
 });

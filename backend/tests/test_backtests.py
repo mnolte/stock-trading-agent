@@ -912,6 +912,84 @@ def test_manager_create_refuse_delete_and_orphans() -> None:
         assert session.get(Backtest, refused.id) is None
 
 
+def test_manager_delete_ignores_stored_run_dir() -> None:
+    """The folder removed on delete comes from the run id alone: a
+    ``run_dir`` value pointing at another ``run-<id>`` folder elsewhere
+    is never used (hard rule 19 — stored text is not a path)."""
+    config = AppConfig()
+    clock = FakeClock(datetime(2024, 6, 3, 10, 0, tzinfo=NY_TZ))
+    manager = BacktestManager(config, clock)
+    row = manager.create(
+        name="t",
+        start=D0,
+        end=D0 + timedelta(days=1),
+        universe_mode="fixed",
+        strategies=[
+            {"ref": "x", "name": "x", "kind": "rules_only", "slug": "x"}
+        ],
+        starting_equity=Decimal(100),
+        slippage_pct=Decimal("0.05"),
+    )
+    canonical = run_dir_for(config, row.id)
+    canonical.mkdir(parents=True)
+    (canonical / "marker.db").write_text("x")
+    victim = Path(config.env.sa_data_dir).parent / "other" / f"run-{row.id}"
+    victim.mkdir(parents=True)
+    (victim / "keep.txt").write_text("x")
+    with get_session_maker()() as session:
+        stored = session.get(Backtest, row.id)
+        assert stored is not None
+        stored.status = "done"
+        stored.run_dir = str(victim)
+        session.commit()
+
+    assert manager.delete(row.id)
+    assert not canonical.exists()
+    assert (victim / "keep.txt").exists()
+    with get_session_maker()() as session:
+        assert session.get(Backtest, row.id) is None
+
+
+def test_strategy_db_path_uses_stored_values(client: Any) -> None:
+    """``_strategy_sf`` builds the db path from the row id and the stored
+    slug — the request's run_id/slug are lookups only (hard rule 19)."""
+    from app.backtests.bundle import init_strategy_db
+
+    config = AppConfig()
+    with get_session_maker()() as session:
+        row = Backtest(
+            name="s",
+            start_date=D0,
+            end_date=D0,
+            universe_mode="fixed",
+            strategies=[
+                {
+                    "ref": "x",
+                    "name": "x",
+                    "kind": "rules_only",
+                    "slug": "rules-only",
+                }
+            ],
+            starting_equity=Decimal(10),
+            slippage_pct=Decimal(0),
+            status="done",
+            run_dir="",
+            created_at=_naive_utc(datetime(2024, 6, 3, 14, 0)),
+        )
+        session.add(row)
+        session.commit()
+        run_id = row.id
+    run_dir = run_dir_for(config, run_id)
+    run_dir.mkdir(parents=True)
+    init_strategy_db(run_dir / "rules-only.db")
+
+    base = f"/api/backtests/{run_id}/strategies"
+    assert client.get(f"{base}/rules-only/trades").status_code == 200
+    assert client.get(f"{base}/other/trades").status_code == 404
+    assert client.get(f"{base}/BAD_SLUG/trades").status_code == 422
+    assert client.get(f"{base}/rules-only/export.csv").status_code == 200
+
+
 def test_manager_one_run_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
     config = AppConfig()
     clock = FakeClock(datetime(2024, 6, 3, 10, 0, tzinfo=NY_TZ))
@@ -1812,3 +1890,56 @@ async def test_cancel_kills_a_stubborn_child_by_pid(
         assert row is not None
         assert row.status == "cancelled"
     assert (run_dir / "rules-only.db").exists()
+
+
+def test_answer_sentence_stored_once_for_done_runs_only(client: Any) -> None:
+    """Runs finished before the answer existed get it on first read;
+    an interrupted run keeps 'results so far' and no sentence."""
+    with get_session_maker()() as session:
+        done = Backtest(
+            name="done",
+            start_date=D0,
+            end_date=D0,
+            universe_mode="fixed",
+            strategies=[{"ref": "live", "name": "Live", "kind": "llm", "slug": "live"}],
+            starting_equity=Decimal(10000),
+            slippage_pct=Decimal(0),
+            status="done",
+            run_dir="",
+            summary={
+                "live": {
+                    "return_pct": 18.6,
+                    "spy_return_pct": 39.9,
+                    "max_drawdown_pct": -5.2,
+                    "time_in_market": 0.24,
+                    "spy_curve": [{"date": "2024-06-03", "equity": 10000}],
+                }
+            },
+            created_at=_naive_utc(datetime(2024, 6, 3, 14, 0)),
+        )
+        interrupted = Backtest(
+            name="cut",
+            start_date=D0,
+            end_date=D0,
+            universe_mode="fixed",
+            strategies=[{"ref": "live", "name": "Live", "kind": "llm", "slug": "live"}],
+            starting_equity=Decimal(10000),
+            slippage_pct=Decimal(0),
+            status="interrupted",
+            run_dir="",
+            summary=done.summary,
+            created_at=_naive_utc(datetime(2024, 6, 3, 15, 0)),
+        )
+        session.add_all([done, interrupted])
+        session.commit()
+        done_id, interrupted_id = done.id, interrupted.id
+    runs = {r["id"]: r for r in client.get("/api/backtests").json()["runs"]}
+    assert runs[done_id]["summary"]["answer"].startswith(
+        "Live made +18.6% where buying and holding SPY made +39.9%:"
+    )
+    assert "answer" not in runs[interrupted_id]["summary"]
+    # The sentence is stored, not recomputed per request.
+    with get_session_maker()() as session:
+        stored = session.get(Backtest, done_id)
+        assert stored is not None and stored.summary is not None
+        assert stored.summary["answer"] == runs[done_id]["summary"]["answer"]

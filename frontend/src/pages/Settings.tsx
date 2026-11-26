@@ -4,7 +4,8 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 
 import { getAskStatus } from '../api/ask';
 import type { AskStatus } from '../api/ask';
-import { errorMessages } from '../api/client';
+import { errorMessages, get } from '../api/client';
+import { useApiResource } from '../api/useResource';
 import { useLiveUpdates } from '../api/liveContext';
 import {
   getKeys,
@@ -69,6 +70,11 @@ import {
   settingLeaf,
 } from './settingsDiff';
 import { validateForm } from './settingsValidation';
+import CONTROL_SECTIONS from '../../public/settings-controls.json';
+import { DialogButton, Modal } from '../components/Modal';
+import { postUseConfig } from '../api/state';
+import { SavedValues } from '../components/settings/SavedValues';
+import type { SavedWithoutControl } from '../types/api';
 
 // ---------------------------------------------------------------------------
 // design tokens (design/screens/Settings.dc.html)
@@ -86,6 +92,8 @@ const DEFAULTS: Record<string, string> = {
   'decision.min_confidence_enter': '0.55',
   'decision.min_reward_risk': '1.5',
   'decision.max_calls_per_cycle': '10',
+  'decision.call_timeout_seconds': '30 s',
+  'decision.max_output_tokens': '2048',
   'risk.risk_per_trade_pct': '0.5%',
   'risk.max_position_pct': '20%',
   'risk.max_order_pct': '25%',
@@ -101,6 +109,25 @@ const DEFAULTS: Record<string, string> = {
   'performance.slippage_pct_per_side': '0.05%',
   'reviews.briefing_enabled': 'On',
   'reviews.monthly_cost_cap_usd': '$2',
+  'reviews.temperature': '0.2',
+  'reviews.max_words.weekly_summary': '120',
+  'reviews.max_words.weekly_story': '350',
+  'reviews.max_words.briefing': '220',
+  'shadows.monthly_cost_cap_usd': '$5',
+  'backtest.monthly_cost_cap_usd': '$20',
+  'ask.enabled': 'On',
+  'ask.model': 'claude-sonnet-5-5 · Anthropic',
+  'ask.monthly_cost_cap_usd': '$15',
+  'ask.max_cost_per_answer_usd': '$0.25',
+  'ask.keep_days': '90 days',
+  'ask.instructions': 'empty',
+  'ask.max_context_tokens': '60000',
+  'ask.max_tool_rounds': '8',
+  'ask.max_tool_result_tokens': '6000',
+  'ask.answer_timeout_seconds': '90 s',
+  'ask.max_questions_per_minute': '10 / min',
+  'ask.max_notes': '100',
+  'ask.max_output_tokens': '4096',
   'universe.mode': 'Fixed list',
   'selection.mode': 'Rank order',
   'selection.confidence_weight': '0.5',
@@ -121,6 +148,22 @@ const DEFAULTS: Record<string, string> = {
   'readiness.max_price_blocked_pct': '5%',
 };
 
+const WORD_LIMIT_PATHS = [
+  'reviews.max_words.weekly_summary',
+  'reviews.max_words.weekly_story',
+  'reviews.max_words.briefing',
+] as const;
+
+const ASK_LIMIT_PATHS = [
+  'ask.max_tool_rounds',
+  'ask.max_context_tokens',
+  'ask.max_tool_result_tokens',
+  'ask.max_output_tokens',
+  'ask.answer_timeout_seconds',
+  'ask.max_questions_per_minute',
+  'ask.max_notes',
+] as const;
+
 // field path -> unit suffix for "Changed from …" and the unsaved list
 const UNITS: Record<string, string> = {
   'execution.entry_limit_offset_pct': '%',
@@ -138,6 +181,24 @@ const UNITS: Record<string, string> = {
   'risk.earnings_blackout_days': ' trading days',
   'performance.slippage_pct_per_side': '%',
   'reviews.monthly_cost_cap_usd': '',
+  'shadows.monthly_cost_cap_usd': '',
+  'backtest.monthly_cost_cap_usd': '',
+  'decision.call_timeout_seconds': ' s',
+  'decision.max_output_tokens': ' tokens',
+  'reviews.max_words.weekly_summary': ' words',
+  'reviews.max_words.weekly_story': ' words',
+  'reviews.max_words.briefing': ' words',
+  'ask.monthly_cost_cap_usd': '',
+  'ask.max_cost_per_answer_usd': '',
+  'ask.keep_days': ' days',
+  'ask.instructions': '',
+  'ask.max_context_tokens': ' tokens',
+  'ask.max_tool_rounds': ' rounds',
+  'ask.max_tool_result_tokens': ' tokens',
+  'ask.answer_timeout_seconds': ' s',
+  'ask.max_questions_per_minute': ' / min',
+  'ask.max_notes': ' notes',
+  'ask.max_output_tokens': ' tokens',
   'notifications.repeat_limit_minutes': ' min',
   'events.fomc.block_minutes_before': ' min',
   'events.fomc.block_minutes_after': ' min',
@@ -157,82 +218,7 @@ const UNITS: Record<string, string> = {
 };
 
 // field path -> section id, for the section-list change badges
-const SECTION_OF: Record<string, string> = {
-  'execution.mode': 'trading',
-  'execution.quote_max_age_seconds': 'trading',
-  'execution.quote_max_deviation_pct': 'trading',
-  'execution.tighten_quote_max_age_seconds': 'trading',
-  'execution.fill_settle_seconds': 'trading',
-  'api.broker_timeout_seconds': 'trading',
-  'selection.mode': 'entry-selection',
-  'selection.confidence_weight': 'entry-selection',
-  'selection.last_slot_min_ev_r': 'entry-selection',
-  'decision.entry_gate': 'gates',
-  'decision.min_ev_r': 'gates',
-  'decision.v3.min_room_atr': 'gates',
-  'decision.v3.min_edge': 'gates',
-  'decision.v4.near_level_atr': 'gates',
-  'decision.v5.trend_gate': 'gates',
-  'decision.v5.trend_gate_regimes': 'gates',
-  'decision.v5.max_rr': 'gates',
-  'decision.v5.base_rate_sessions': 'gates',
-  'decision.v5.price_vs_signal_adverse_atr': 'gates',
-  'decision.v6.sideways_max_target_atr': 'gates',
-  'gui.near_stop_atr': 'display',
-  'inspector.slow_call_seconds': 'display',
-  'performance.slippage_pct_per_side': 'trading',
-  'risk.risk_per_trade_pct': 'risk',
-  'risk.max_position_pct': 'risk',
-  'risk.max_order_pct': 'risk',
-  'risk.max_open_risk_pct': 'risk',
-  'risk.max_open_positions': 'risk',
-  'risk.max_per_sector': 'risk',
-  'risk.daily_loss_limit_pct': 'risk',
-  'risk.losing_streak': 'risk',
-  'risk.shock_brake_1h_pct': 'risk',
-  'risk.shock_brake_session_pct': 'risk',
-  'risk.drawdown_kill_pct': 'risk',
-  'risk.max_orders_per_cycle': 'risk',
-  'rules.rsi_min': 'rules',
-  'rules.rsi_max': 'rules',
-  'decision.min_confidence_enter': 'rules',
-  'decision.stop_atr_min': 'rules',
-  'decision.stop_atr_max': 'rules',
-  'decision.min_reward_risk': 'rules',
-  'execution.max_spread_pct': 'rules',
-  'execution.entry_limit_offset_pct': 'rules',
-  'execution.entry_timeout_minutes': 'rules',
-  'events.fomc.enabled': 'rules',
-  'events.fomc.block_minutes_before': 'rules',
-  'events.fomc.block_minutes_after': 'rules',
-  'risk.earnings_blackout_days': 'earnings',
-  'risk.hold_through_earnings': 'earnings',
-  'decision.model': 'model',
-  'decision.prompt': 'model',
-  'decision.temperature': 'model',
-  'decision.max_calls_per_cycle': 'model',
-  'reviews.briefing_enabled': 'model',
-  'reviews.monthly_cost_cap_usd': 'model',
-  'reviews.models.weekly': 'model',
-  'reviews.models.briefing': 'model',
-  'reviews.models.verdict': 'model',
-  'ask.enabled': 'ask',
-  'ask.model': 'ask',
-  'ask.monthly_cost_cap_usd': 'ask',
-  'ask.max_cost_per_answer_usd': 'ask',
-  'ask.keep_days': 'ask',
-  'ask.instructions': 'ask',
-  'readiness.min_closed_trades': 'ready',
-  'auth.idle_hours': 'access',
-  'readiness.min_sessions': 'ready',
-  'readiness.max_drawdown_pct': 'ready',
-  'readiness.min_avg_r': 'ready',
-  'readiness.min_profit_factor': 'ready',
-  'readiness.min_proposal_pass_pct': 'ready',
-  'readiness.max_calibration_gap_pts': 'ready',
-  'readiness.min_cycles_completed_pct': 'ready',
-  'readiness.max_price_blocked_pct': 'ready',
-};
+const SECTION_OF: Record<string, string> = CONTROL_SECTIONS;
 
 // Route name -> section id (docs/kickoffs 056: /settings/<section>).
 const PARAM_TO_ID: Record<string, string> = {
@@ -313,18 +299,185 @@ const ADVANCED_PATHS = [
 // ---------------------------------------------------------------------------
 // small building blocks
 
-function AskSpendLine() {
+/** One row of the read-only model catalog (item 109, GET
+ * /api/settings/models — the ``models`` block in config). */
+interface ModelCatalogEntry {
+  id: string;
+  provider: string;
+  input: string | null;
+  cached_input: string | null;
+  cache_write: string | null;
+  output: string | null;
+  cutoff: string | null;
+  effort: string | null;
+  supports_temperature: boolean | null;
+  api: string | null;
+  timeout_seconds: number | null;
+  key_ok: boolean;
+  used_by: string[];
+}
+
+/** "Reviews (weekly)" → "weekly review", "Shadow 'F'" → "shadow F" —
+ * the catalog's used-by names in the design's wording. */
+function usedByLabel(what: string): string {
+  const review = what.match(/^Reviews \((\w+)\)$/);
+  if (review) {
+    return { weekly: 'weekly review', briefing: 'daily briefing', verdict: 'verdicts' }[
+      review[1]
+    ] ?? what.toLowerCase();
+  }
+  const shadow = what.match(/^Shadow '(.+)'$/);
+  if (shadow) return `shadow ${shadow[1]}`;
+  if (what === 'Live decisions') return 'live decisions';
+  return what;
+}
+
+function cutoffLabel(iso: string | null): string {
+  if (!iso) return '—';
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const m = iso.match(/^(\d{4})-(\d{2})/);
+  return m ? `${months[Number(m[2]) - 1] ?? m[2]} ${m[1]}` : iso;
+}
+
+function priceLabel(v: string | null): string {
+  if (v == null) return '—';
+  const n = Number(v);
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(4)));
+}
+
+function samplingLabel(m: ModelCatalogEntry): string {
+  if (m.supports_temperature) return 'temperature';
+  if (m.effort) return `effort ${m.effort}`;
+  return 'no temperature';
+}
+
+/** The "Models" group at the end of Model and reviews (item 109,
+ * design/screens/Settings.dc.html): the config catalog, read-only —
+ * prices change in config, never here. */
+function ModelsCatalog() {
+  const res = useApiResource<{ models: ModelCatalogEntry[] }>(
+    (signal) => get<{ models: ModelCatalogEntry[] }>('/api/settings/models', signal),
+  );
+  const models = res.data?.models ?? [];
+  const th: CSSProperties = {
+    textAlign: 'left',
+    padding: '8px 10px',
+    fontSize: 'var(--sa-text-sm)',
+    fontWeight: 500,
+    color: 'var(--sa-text-muted)',
+    borderBottom: '1px solid var(--sa-border)',
+    whiteSpace: 'nowrap',
+  };
+  const td: CSSProperties = {
+    padding: '10px',
+    borderBottom: '1px solid var(--sa-border)',
+    fontSize: 'var(--sa-text-md)',
+    verticalAlign: 'top',
+  };
+  const numTd: CSSProperties = {
+    ...td,
+    fontFamily: 'var(--sa-font-mono)',
+    textAlign: 'right',
+    color: 'var(--sa-text-2)',
+    whiteSpace: 'nowrap',
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-3)', padding: '14px 0 18px' }}>
+      <p style={{ margin: 0, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.55, maxWidth: 720 }}>
+        The models block in config is the only list of models and prices (USD per million tokens).
+        It is read at start-up and not edited here: prices change rarely, and every call keeps the
+        cost it had. A model without a working key for its provider can't be chosen above.
+      </p>
+      {res.loading && !res.data ? (
+        <SkeletonText lines={4} />
+      ) : res.failure && !res.data ? (
+        <Banner
+          variant="warning"
+          actions={
+            <button type="button" onClick={res.reload} style={{ border: '1px solid var(--sa-border-strong)', background: 'var(--sa-raised)', color: 'var(--sa-text)', borderRadius: 'var(--sa-radius-sm)', padding: '4px 12px', cursor: 'pointer' }}>
+              Retry
+            </button>
+          }
+        >
+          The model catalog didn't load.
+        </Banner>
+      ) : (
+        <div style={{ overflowX: 'auto', minWidth: 0 }}>
+          <table className="ml-table" style={{ width: '100%', minWidth: 760, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th scope="col" style={th}>Model · provider · used by</th>
+                <th scope="col" title="USD per million input tokens" style={th}>Input</th>
+                <th scope="col" title="USD per million cached input tokens; falls back to input" style={th}>Cached</th>
+                <th scope="col" title="Anthropic only: USD per million cache-creation tokens; falls back to input" style={th}>Cache write</th>
+                <th scope="col" title="USD per million output tokens, thinking included" style={th}>Output</th>
+                <th scope="col" title="Reliable knowledge cutoff, used by the backtest lookahead check" style={th}>Cutoff</th>
+                <th scope="col" title="OpenAI models take the temperature above unless the list says they don't; Claude models take an effort" style={th}>Sampling</th>
+                <th scope="col" style={th}>API</th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.map((m) => (
+                <tr key={m.id}>
+                  <td style={td} data-l="">
+                    <div style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text)' }}>
+                      {m.id}
+                      {!m.key_ok && (
+                        <span style={{ fontFamily: 'var(--sa-font-sans)', fontSize: 'var(--sa-text-xs)', color: 'var(--sa-warning-text)', marginLeft: 8 }}>
+                          needs the {providerLabel(m.provider)} key
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 4 }}>
+                      {providerLabel(m.provider)}
+                      {m.used_by.length > 0 && ` · ${m.used_by.map(usedByLabel).join(', ')}`}
+                    </div>
+                  </td>
+                  <td style={numTd} data-l="Input">{priceLabel(m.input)}</td>
+                  <td style={numTd} data-l="Cached">{priceLabel(m.cached_input)}</td>
+                  <td style={numTd} data-l="Cache write">{priceLabel(m.cache_write)}</td>
+                  <td style={numTd} data-l="Output">{priceLabel(m.output)}</td>
+                  <td style={{ ...td, fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-2)', whiteSpace: 'nowrap' }} data-l="Cutoff">
+                    {cutoffLabel(m.cutoff)}
+                  </td>
+                  <td style={{ ...td, color: 'var(--sa-text-2)', whiteSpace: 'nowrap' }} data-l="Sampling">
+                    {samplingLabel(m)}
+                  </td>
+                  <td style={{ ...td, fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-muted)' }} data-l="API">
+                    {m.api ?? 'chat'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p style={{ margin: 0, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.55 }}>
+        Timeouts per model: a model's own <code>timeout_seconds</code> in the models block wins; the rest
+        use the call timeout above.{' '}
+        <Link to="/insights#q6" style={{ color: 'var(--sa-text-2)', textDecoration: 'underline', textUnderlineOffset: 3 }}>
+          All model costs
+        </Link>
+      </p>
+    </div>
+  );
+}
+
+/** This month's Ask spend, inline in the monthly-cap row's help
+ * (design/screens/Settings.dc.html). Renders nothing until the status
+ * loads or when Ask has spent nothing yet. */
+function AskMonthSpend() {
   const [status, setStatus] = useState<AskStatus | null>(null);
   useEffect(() => {
     getAskStatus().then(setStatus).catch(() => setStatus(null));
   }, []);
   if (!status?.spent_usd) return null;
   return (
-    <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', marginBottom: 4 }}>
-      This month: ${Number(status.spent_usd).toFixed(2)} of ${status.cap_usd}
+    <>
+      {' '}This month: ${Number(status.spent_usd).toFixed(2)} of ${Number(status.cap_usd ?? 0).toFixed(2)}
       {status.questions ? ` · ${status.questions} questions` : ''}
-      {status.avg_cost_usd ? ` · about $${Number(status.avg_cost_usd).toFixed(3)} each` : ''}
-    </div>
+      {status.avg_cost_usd ? ` · about $${Number(status.avg_cost_usd).toFixed(3)} each` : ''}.
+    </>
   );
 }
 
@@ -831,7 +984,7 @@ function EventChannelTable({
                   const critical = ev.severity === 'critical';
                   const rowChanged = `notifications.events.${ev.key}` in changed;
                   return (
-                    <tr key={ev.key}>
+                    <tr key={ev.key} data-setting="notifications.events.*">
                       <td style={{ ...cell, fontSize: 'var(--sa-text-md)' }}>
                         {ev.label}
                         {ev.description && (
@@ -1045,7 +1198,7 @@ function SmtpCard({
   };
 
   return (
-    <div style={{ padding: 14, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div data-setting="notifications.email.smtp_host notifications.email.smtp_port notifications.email.username notifications.email.from notifications.email.to" style={{ padding: 14, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
         <b style={{ fontWeight: 600, fontSize: 'var(--sa-text-base)' }}>Email (SMTP)</b>
         <span style={chip(status.tone)}>{status.text}</span>
@@ -1203,6 +1356,21 @@ export default function Settings() {
   const [resetStep2, setResetStep2] = useState<string | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
   const [advOpen, setAdvOpen] = useState(false);
+  const [takeConfig, setTakeConfig] = useState<SavedWithoutControl | null>(null);
+  const [configReason, setConfigReason] = useState('');
+  const [configBusy, setConfigBusy] = useState(false);
+  const useConfig = () => {
+    if (!takeConfig || !configReason.trim()) return;
+    setConfigBusy(true);
+    postUseConfig(takeConfig.key, configReason.trim())
+      .then((res) => {
+        setTakeConfig(null);
+        setNotice(`Saved as v${res.version} · ${res.effective_from}.`);
+        refresh();
+      })
+      .catch((e) => setErrors(errorMessages(e)))
+      .finally(() => setConfigBusy(false));
+  };
 
   const [universe, setUniverse] = useState<UniverseResponse | null>(null);
   // Promote to live (docs/SPEC.md, Strategies and shadows): the shadow's
@@ -1286,7 +1454,7 @@ export default function Settings() {
   // the hook) and the tighter/looser tag per changed leaf.
   const riskPreview = useRiskPreview(form?.risk ?? null);
   const directions = useMemo(
-    () => (data && form ? diffDirections(data.settings, form) : {}),
+    () => (data && form ? diffDirections(data.settings, form, data.directions) : {}),
     [data, form],
   );
 
@@ -1341,6 +1509,30 @@ export default function Settings() {
                 briefing: '',
                 verdict: '',
                 ...f.reviews.prompts,
+                [task]: value,
+              },
+            },
+          }
+        : f,
+    );
+    setNotice(null);
+  };
+
+  const patchReviewWords = (
+    task: 'weekly_summary' | 'weekly_story' | 'briefing',
+    value: number,
+  ) => {
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            reviews: {
+              ...f.reviews,
+              max_words: {
+                weekly_summary: 120,
+                weekly_story: 350,
+                briefing: 220,
+                ...f.reviews.max_words,
                 [task]: value,
               },
             },
@@ -1683,6 +1875,7 @@ export default function Settings() {
           path,
           settingLeaf(data.settings, path),
           settingLeaf(form, path),
+          data.directions,
         )
       : null;
     const phrase =
@@ -1712,6 +1905,7 @@ export default function Settings() {
     },
   ) => (
     <Row
+      paths={path}
       key={path}
       id={props.id}
       label={props.label}
@@ -1734,6 +1928,23 @@ export default function Settings() {
         const parts = path.split('.');
         if (parts.length === 3 && parts[0] === 'universe') {
           resetScreen(parts[2]);
+          return;
+        }
+        if (
+          parts.length === 3 &&
+          parts[0] === 'reviews' &&
+          parts[1] === 'max_words'
+        ) {
+          const saved = (
+            data.settings.reviews?.max_words as
+              | Record<string, number | undefined>
+              | undefined
+          )?.[parts[2]];
+          if (saved === undefined) return;
+          patchReviewWords(
+            parts[2] as 'weekly_summary' | 'weekly_story' | 'briefing',
+            saved,
+          );
           return;
         }
         if (
@@ -1796,6 +2007,7 @@ export default function Settings() {
             onChangedOnly={setChangedOnly}
             sectionChanges={sectionChanges}
             activeVersion={data.active_version}
+            savedCount={data.saved_without_control?.length ?? 0}
           />
 
         <div style={{ flex: '999 1 560px', minWidth: 0, maxWidth: 920, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
@@ -1876,12 +2088,12 @@ export default function Settings() {
                             <input
                               type="checkbox"
                               aria-label={item.label}
-                              checked={Boolean(current)}
+                              checked={item.path === 'schedule.last_cycle_no_entries' ? !current : Boolean(current)}
                               onChange={(e) =>
                                 patch(
                                   parts[0] as keyof SettingsForm,
                                   parts[1],
-                                  e.target.checked,
+                                  item.path === 'schedule.last_cycle_no_entries' ? !e.target.checked : e.target.checked,
                                 )
                               }
                             />
@@ -1944,6 +2156,7 @@ export default function Settings() {
           {currentId === 'trading' && (<>
           <Section id="trading" title="Trading" blurb="How orders are sent and which symbols are watched.">
             <Row
+              paths="execution.mode"
               id="mode"
               label="Execution mode"
               help={
@@ -1985,6 +2198,7 @@ export default function Settings() {
             </Row>
 
             <Row
+              paths="universe.mode"
               id="umode"
               label="Universe"
               help={
@@ -2125,7 +2339,7 @@ export default function Settings() {
                 <option>Return vs SPY, 20 sessions</option>
               </select>
             </Row>
-            <div style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div data-setting="universe.symbols" style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <span style={{ fontSize: 'var(--sa-text-base)' }}>Fixed list</span>
@@ -2416,6 +2630,7 @@ export default function Settings() {
               ),
             })}
             <Row
+              paths="risk.shock_brake_1h_pct risk.shock_brake_session_pct"
               label="Shock brake"
               help="No new entries this session when SPY drops this much in the last 1h bar or since the open."
               changed={'risk.shock_brake_1h_pct' in changed || 'risk.shock_brake_session_pct' in changed}
@@ -2480,6 +2695,7 @@ export default function Settings() {
           <Section id="rules" title="Entry rules and checks" blurb="The pre-filter before a model call, and the checks on what the model proposes.">
             <h3 style={subHead}>Before the model is asked</h3>
             <Row
+              paths="rules.rsi_min rules.rsi_max"
               label="RSI range (1h)"
               help={
                 <>
@@ -2518,6 +2734,7 @@ export default function Settings() {
               ),
             })}
             <Row
+              paths="decision.stop_atr_min decision.stop_atr_max"
               label="Stop distance"
               help={
                 <>
@@ -2610,6 +2827,7 @@ export default function Settings() {
               return (
                 <>
                   <Row
+                    paths="events.fomc.enabled"
                     id="fomc"
                     label="FOMC window"
                     help="No new entries in a cycle that starts from 30 minutes before to 45 minutes after a 14:00 FOMC decision: the 13:46 cycle. Holds and exits are not affected. Strategy-overridable."
@@ -2626,6 +2844,7 @@ export default function Settings() {
                     />
                   </Row>
                   <Row
+                    paths="events.fomc.block_minutes_before events.fomc.block_minutes_after"
                     id="fomcmin"
                     label="FOMC window minutes"
                     help="Around the 14:00 New York decision."
@@ -3014,6 +3233,21 @@ export default function Settings() {
                 />
               ),
             })}
+            {row('gui.log_watch_min_count', {
+              id: 'logwatch',
+              label: 'Recurring warning counts as “watch” from',
+              help: 'Logs → Recurring problems marks a warning “watch” when it was counted this often in the chosen period. · default 5 times',
+              children: (
+                <NumBox
+                  id="logwatch"
+                  value={s.gui?.log_watch_min_count ?? 5}
+                  unit="times"
+                  accent={'gui.log_watch_min_count' in changed}
+                  invalid={!!fieldErrors['gui.log_watch_min_count']}
+                  onChange={(v) => patch('gui', 'log_watch_min_count', v)}
+                />
+              ),
+            })}
             {row('inspector.slow_call_seconds', {
               id: 'slowcall',
               label: 'Slow call',
@@ -3054,13 +3288,13 @@ export default function Settings() {
           </>)}
 
           {currentId === 'model' && (<>
-          <Section id="model" title="Model and reviews" blurb="The model, its prompt and limits on calls and cost.">
+          <Section id="model" title="Model and reviews" blurb="The models, their prompts, limits on calls and the monthly cost caps. Groups: Decisions, Reviews, Ask the agent, Shadows and backtests, Models.">
             <h3 style={subHead}>Decisions</h3>
             {row('decision.model', {
               notes: ["decision.model"],
               id: 'model',
               label: 'Model',
-              help: 'Used for live decisions.',
+              help: "Live decisions, OpenAI or Anthropic. Models whose key is missing can't be chosen. Try a new model in a shadow first.",
               children: (
                 <select
                   id="model"
@@ -3091,7 +3325,7 @@ export default function Settings() {
               notes: ["decision.prompt"],
               id: 'prompt',
               label: 'Decision prompt',
-              help: `${decisionPromptDesc ? `${decisionPromptDesc} ` : ''}Prompts are never edited; a change is a new version.`,
+              help: `Prompts are never edited; a change is a new version. Every decision prompt is listed; a version a shadow is testing is marked.${decisionPromptDesc ? ` ${decisionPromptDesc}` : ''}`,
               defaultText: undefined,
               children: (
                 <select
@@ -3116,7 +3350,7 @@ export default function Settings() {
               notes: ["decision.temperature"],
               id: 'temp',
               label: 'Temperature',
-              help: 'Decisions use 0 so the same input gives the same answer. OpenAI models only — Claude models use their effort setting instead.',
+              help: 'OpenAI models only: 0, so the same input gives the same answer. Claude models take no temperature; they use the effort set per model in config.',
               children: (
                 <NumBox id="temp" value={s.decision.temperature} width={60} accent={'decision.temperature' in changed} invalid={!!fieldErrors['decision.temperature']} onChange={(v) => patch('decision', 'temperature', v)} />
               ),
@@ -3127,6 +3361,22 @@ export default function Settings() {
               help: 'Held positions are called first.',
               children: (
                 <NumBox id="calls" value={s.decision.max_calls_per_cycle} unit="calls" accent={'decision.max_calls_per_cycle' in changed} invalid={!!fieldErrors['decision.max_calls_per_cycle']} onChange={(v) => patch('decision', 'max_calls_per_cycle', v)} />
+              ),
+            })}
+            {row('decision.call_timeout_seconds', {
+              id: 'calltimeout',
+              label: 'Model call timeout',
+              help: 'A call with no answer by then is a timeout: skip or hold, never retried. A model in the list can set its own.',
+              children: (
+                <NumBox id="calltimeout" value={s.decision.call_timeout_seconds ?? 30} unit="s" width={60} accent={'decision.call_timeout_seconds' in changed} invalid={!!fieldErrors['decision.call_timeout_seconds']} onChange={(v) => patch('decision', 'call_timeout_seconds', v)} />
+              ),
+            })}
+            {row('decision.max_output_tokens', {
+              id: 'maxout',
+              label: 'Max answer length',
+              help: 'Output tokens per decision call, thinking included. A longer answer is cut off and counts as invalid.',
+              children: (
+                <NumBox id="maxout" value={s.decision.max_output_tokens ?? 2048} unit="tokens" width={70} accent={'decision.max_output_tokens' in changed} invalid={!!fieldErrors['decision.max_output_tokens']} onChange={(v) => patch('decision', 'max_output_tokens', v)} />
               ),
             })}
 
@@ -3149,10 +3399,10 @@ export default function Settings() {
                     label: taskLabels[task],
                     help:
                       task === 'weekly'
-                        ? 'Runs after the Friday close.'
+                        ? 'Saturday review of the week.'
                         : task === 'briefing'
-                          ? 'The text of the daily briefing.'
-                          : 'Scores closed decisions.',
+                          ? 'Trading days before the open.'
+                          : 'Scores decisions once enough sessions exist to judge them.',
                     children: (
                       <select
                         id={`rmodel-${task}`}
@@ -3184,10 +3434,10 @@ export default function Settings() {
                     label: promptLabels[task],
                     help:
                       task === 'weekly'
-                        ? 'The prompt the weekly review runs.'
+                        ? 'Prompts are never edited; a change is a new version. Only weekly prompts are listed.'
                         : task === 'briefing'
-                          ? 'The prompt the daily briefing runs.'
-                          : 'The prompt the verdicts run.',
+                          ? 'Only briefing prompts are listed.'
+                          : 'Only verdict prompts are listed. A change applies to drafts written after it; existing drafts keep theirs.',
                     children: (
                       <select
                         id={`rprompt-${task}`}
@@ -3211,6 +3461,41 @@ export default function Settings() {
                 </div>
               );
             })}
+            {row('reviews.temperature', {
+              id: 'rtemp',
+              label: 'Review temperature',
+              help: 'OpenAI models only, for all three review tasks. Claude models use their effort from the model list.',
+              children: (
+                <NumBox id="rtemp" value={s.reviews.temperature ?? 0.2} width={60} accent={'reviews.temperature' in changed} invalid={!!fieldErrors['reviews.temperature']} onChange={(v) => patch('reviews', 'temperature', v)} />
+              ),
+            })}
+            <details className="sa-adv" style={{ marginTop: 0 }}>
+              <summary style={{ cursor: 'pointer', minHeight: 44, display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--sa-text-sm)', fontWeight: 600, color: 'var(--sa-text-2)', listStyle: 'none' }}>
+                <span aria-hidden="true" className="sa-adv-chev" style={{ display: 'inline-block', transition: 'transform 150ms' }}>▸</span>
+                Word limits{' '}
+                <span style={{ fontWeight: 400, color: 'var(--sa-text-muted)' }}>
+                  {WORD_LIMIT_PATHS.filter((p) => p in changed).length > 0
+                    ? `${WORD_LIMIT_PATHS.filter((p) => p in changed).length} changed`
+                    : '3 settings, all at default'}
+                </span>
+              </summary>
+              {([
+                ['weekly_summary', 'Weekly summary', 'The short summary at the top of the weekly review.'],
+                ['weekly_story', 'Weekly story', 'The full story of the week. Longer answers are cut at a sentence.'],
+                ['briefing', 'Daily briefing', 'The briefing before the open.'],
+              ] as const).map(([task, label, help]) => (
+                <div key={task}>
+                  {row(`reviews.max_words.${task}`, {
+                    id: `rwords-${task}`,
+                    label,
+                    help,
+                    children: (
+                      <NumBox id={`rwords-${task}`} value={s.reviews.max_words?.[task] ?? ({ weekly_summary: 120, weekly_story: 350, briefing: 220 } as const)[task]} unit="words" width={70} accent={`reviews.max_words.${task}` in changed} invalid={!!fieldErrors[`reviews.max_words.${task}`]} onChange={(v) => patchReviewWords(task, v)} />
+                    ),
+                  })}
+                </div>
+              ))}
+            </details>
             {row('reviews.briefing_enabled', {
               id: 'brief',
               label: 'Daily briefing',
@@ -3222,11 +3507,47 @@ export default function Settings() {
             {row('reviews.monthly_cost_cap_usd', {
               id: 'rcap',
               label: 'Review cost cap',
-              help: `Separate from decisions.${data.reviews_spend_usd ? ` This month: $${Number(data.reviews_spend_usd).toFixed(2)} of $${s.reviews.monthly_cost_cap_usd}.` : ''} Over the cap, reviews use the plain template.`,
+              help: (
+                <>
+                  Separate from decisions.{data.reviews_spend_usd ? ` This month: $${Number(data.reviews_spend_usd).toFixed(2)} of $${s.reviews.monthly_cost_cap_usd}.` : ''} Over the cap, reviews use the plain template.{' '}
+                  <Link to="/insights#q6" style={{ color: 'var(--sa-text-2)', textDecoration: 'underline', textUnderlineOffset: 3 }}>All model costs</Link>
+                </>
+              ),
               children: (
                 <NumBox id="rcap" value={s.reviews.monthly_cost_cap_usd} unit="$ / month" width={60} accent={'reviews.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['reviews.monthly_cost_cap_usd']} onChange={(v) => patch('reviews', 'monthly_cost_cap_usd', v)} />
               ),
             })}
+
+            <h3 style={subHead}>Shadows and backtests</h3>
+            {row('shadows.monthly_cost_cap_usd', {
+              id: 'shcap',
+              label: 'Shadow cost cap',
+              help: (
+                <>
+                  Model calls of LLM shadows. At the cap they pause until the 1st; rules-only shadows keep running.
+                  {data.shadows_spend_usd != null && ` This month: $${Number(data.shadows_spend_usd).toFixed(2)} of $${s.shadows?.monthly_cost_cap_usd ?? 5}.`}
+                </>
+              ),
+              children: (
+                <NumBox id="shcap" value={s.shadows?.monthly_cost_cap_usd ?? 5} unit="$ / month" width={60} accent={'shadows.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['shadows.monthly_cost_cap_usd']} onChange={(v) => patch('shadows', 'monthly_cost_cap_usd', v)} />
+              ),
+            })}
+            {row('backtest.monthly_cost_cap_usd', {
+              id: 'btcap',
+              label: 'Backtest cost cap',
+              help: (
+                <>
+                  A backtest that would pass it is refused before it starts; a running one stops at it.
+                  {data.backtest_spend_usd != null && ` This month: $${Number(data.backtest_spend_usd).toFixed(2)} of $${s.backtest?.monthly_cost_cap_usd ?? 20}.`}
+                </>
+              ),
+              children: (
+                <NumBox id="btcap" value={s.backtest?.monthly_cost_cap_usd ?? 20} unit="$ / month" width={60} accent={'backtest.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['backtest.monthly_cost_cap_usd']} onChange={(v) => patch('backtest', 'monthly_cost_cap_usd', v)} />
+              ),
+            })}
+
+            <h3 style={subHead}>Models</h3>
+            <ModelsCatalog />
           </Section>
           </>)}
 
@@ -3236,11 +3557,10 @@ export default function Settings() {
             title="Ask the agent"
             blurb="The read-only chat drawer: it answers from the app's own data and never changes anything. Its model and cost limits are separate from decisions."
           >
-            <AskSpendLine />
             {row('ask.enabled', {
               id: 'ask-on',
               label: 'Ask the agent',
-              help: 'When off, the Ask button stays but the composer is replaced by this notice.',
+              help: 'The chat drawer on every screen. Read-only: it looks things up and never changes anything.',
               children: (
                 <Switch id="ask-on" on={s.ask?.enabled ?? true} onChange={(v) => patch('ask', 'enabled', v)} />
               ),
@@ -3248,7 +3568,7 @@ export default function Settings() {
             {row('ask.model', {
               id: 'ask-model',
               label: 'Model',
-              help: 'Recommended: claude-sonnet-5-5 or gpt-6.1-sol. Budget: claude-haiku-5-5 or gpt-4.1-mini.',
+              help: 'Answers with several lookups per question, so it needs a model that is good with tools. Recommended: Claude Sonnet 5.5 or GPT-6.1 Sol (both $2 in, $10 out per million tokens; about $0.05–0.10 a question). Budget: Haiku 5.5 or GPT-4.1 mini.',
               children: (
                 <select
                   id="ask-model"
@@ -3280,7 +3600,11 @@ export default function Settings() {
             {row('ask.monthly_cost_cap_usd', {
               id: 'ask-cap',
               label: 'Monthly cost cap',
-              help: 'Over the cap, the composer is replaced by a notice until the 1st.',
+              help: (
+                <>
+                  Separate from decisions and reviews. <AskMonthSpend /> At the cap no new questions until the 1st; chats stay readable.
+                </>
+              ),
               children: (
                 <NumBox id="ask-cap" value={s.ask?.monthly_cost_cap_usd ?? 15} unit="$ / month" width={60} accent={'ask.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['ask.monthly_cost_cap_usd']} onChange={(v) => patch('ask', 'monthly_cost_cap_usd', v)} />
               ),
@@ -3288,22 +3612,54 @@ export default function Settings() {
             {row('ask.max_cost_per_answer_usd', {
               id: 'ask-anscap',
               label: 'Max cost per answer',
-              help: 'At the cap, the agent answers once more without looking anything else up.',
+              help: 'When an answer reaches this, the agent stops looking things up and answers with what it has, and says so.',
               children: (
-                <NumBox id="ask-anscap" value={s.ask?.max_cost_per_answer_usd ?? 0.25} unit="$ / answer" width={60} accent={'ask.max_cost_per_answer_usd' in changed} invalid={!!fieldErrors['ask.max_cost_per_answer_usd']} onChange={(v) => patch('ask', 'max_cost_per_answer_usd', v)} />
+                <NumBox id="ask-anscap" value={s.ask?.max_cost_per_answer_usd ?? 0.25} unit="$" width={60} accent={'ask.max_cost_per_answer_usd' in changed} invalid={!!fieldErrors['ask.max_cost_per_answer_usd']} onChange={(v) => patch('ask', 'max_cost_per_answer_usd', v)} />
               ),
             })}
+            <details className="sa-adv" style={{ marginTop: 0 }}>
+              <summary style={{ cursor: 'pointer', minHeight: 44, display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--sa-text-sm)', fontWeight: 600, color: 'var(--sa-text-2)', listStyle: 'none' }}>
+                <span aria-hidden="true" className="sa-adv-chev" style={{ display: 'inline-block', transition: 'transform 150ms' }}>▸</span>
+                Limits per answer{' '}
+                <span style={{ fontWeight: 400, color: 'var(--sa-text-muted)' }}>
+                  {ASK_LIMIT_PATHS.filter((p) => p in changed).length > 0
+                    ? `${ASK_LIMIT_PATHS.filter((p) => p in changed).length} changed`
+                    : '7 settings, all at default'}
+                </span>
+              </summary>
+              {([
+                ['max_tool_rounds', 'ask-rounds', 'Lookup rounds', 'Model calls per answer; each round can run several lookups. At the limit it answers with what it has.', 8, 'rounds', 60],
+                ['max_context_tokens', 'ask-ctx', 'Context', 'Input tokens the chat may grow to; older turns are summarised beyond it.', 60000, 'tokens', 70],
+                ['max_tool_result_tokens', 'ask-tooltok', 'One lookup result', 'A longer result is cut and the agent is told so.', 6000, 'tokens', 70],
+                ['max_output_tokens', 'ask-maxout', 'Answer length', 'Output tokens per call, thinking included.', 4096, 'tokens', 70],
+                ['answer_timeout_seconds', 'ask-timeout', 'Answer timeout', 'The whole answer, all rounds. Your question is kept; Retry asks again.', 90, 's', 60],
+                ['max_questions_per_minute', 'ask-rate', 'Questions per minute', 'More are refused with a wait time.', 10, 'per min', 60],
+                ['max_notes', 'ask-notes', 'Saved notes', 'At the limit, delete a note before saving another.', 100, 'notes', 60],
+              ] as const).map(([key, id, label, help, fallback, unit, width]) => (
+                <div key={key}>
+                  {row(`ask.${key}`, {
+                    id,
+                    label,
+                    help,
+                    children: (
+                      <NumBox id={id} value={s.ask?.[key] ?? fallback} unit={unit} width={width} accent={`ask.${key}` in changed} invalid={!!fieldErrors[`ask.${key}`]} onChange={(v) => patch('ask', key, v)} />
+                    ),
+                  })}
+                </div>
+              ))}
+            </details>
             {row('ask.keep_days', {
               id: 'ask-keep',
-              label: 'Chats kept for',
-              help: 'Older chats are deleted after the daily backup; notes keep their text.',
+              label: 'Keep chats for',
+              help: 'Older chats are deleted after the nightly backup. Saved notes are kept until you delete them.',
               children: (
                 <NumBox id="ask-keep" value={s.ask?.keep_days ?? 90} unit="days" width={60} accent={'ask.keep_days' in changed} invalid={!!fieldErrors['ask.keep_days']} onChange={(v) => patch('ask', 'keep_days', v)} />
               ),
             })}
             <Row
+              paths="ask.instructions"
               label="Standing instructions"
-              help="How the agent answers — never what it may do. At most 1,000 characters."
+              help="Added to every chat. The agent never writes these itself. At most 1,000 characters."
               changed={'ask.instructions' in changed}
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
@@ -3386,6 +3742,7 @@ export default function Settings() {
             })}
 
             <Row
+              paths="notifications.quiet_hours.start notifications.quiet_hours.end"
               label="Quiet hours (Amsterdam)"
               help="Only critical alerts are sent in this window; the rest wait until it ends."
               changed={
@@ -3529,7 +3886,7 @@ export default function Settings() {
             id="schedule"
             title="Schedule"
             right={`${data.schedule.cycles_per_session} cycles per session`}
-            blurb="Cycle times follow the New York exchange clock and are fixed by the spec."
+            blurb="Cycle times follow the New York exchange clock and are fixed by the spec. One thing can be changed here: whether the last cycle may open positions."
           >
             <div style={{ padding: '8px 0 4px' }}>
               <div style={{ overflowX: 'auto', minWidth: 0 }}>
@@ -3552,8 +3909,9 @@ export default function Settings() {
                         <td style={{ textAlign: 'left', padding: 10, borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', verticalAlign: 'top', fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-muted)' }}>{scheduleRow.amsterdam_shifted ?? '—'}</td>
                         <td style={{ textAlign: 'left', padding: 10, borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', verticalAlign: 'top', fontFamily: 'var(--sa-font-mono)' }}>{scheduleRow.bar_used}</td>
                         <td style={{ textAlign: 'left', padding: 10, borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', verticalAlign: 'top' }}>
-                          {scheduleRow.entries}
-                          {scheduleRow.entries === 'no' && <span style={{ color: 'var(--sa-text-muted)' }}> · exits and earnings exits only</span>}
+                          {scheduleRow.index === data.schedule.rows[data.schedule.rows.length - 1]?.index
+                            ? s.schedule.last_cycle_no_entries ? 'no' : `yes, sent by ${data.entry_cutoff}`
+                            : scheduleRow.entries}
                         </td>
                       </tr>
                     ))}
@@ -3561,6 +3919,13 @@ export default function Settings() {
                 </table>
               </div>
             </div>
+            {row('schedule.last_cycle_no_entries', {
+              id: 'lastentries',
+              label: 'New entries in the last cycle',
+              help: 'On: the 15:46 cycle may open positions; the order is sent by 15:50 New York and cancelled after 10 minutes if unfilled. Off: the last cycle only holds, tightens and exits. Turning it on is a looser setting and asks you to confirm.',
+              defaultText: 'On',
+              children: <Switch id="lastentries" on={!s.schedule.last_cycle_no_entries} onChange={(v) => patch('schedule', 'last_cycle_no_entries', !v)} />,
+            })}
             <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5, paddingBottom: 14 }}>
               Position checks run at :01, :16 and :31 between cycles. From 26 to 30 October Amsterdam
               times are an hour earlier (the EU changes clocks a week before the US). Early-close days
@@ -3577,6 +3942,7 @@ export default function Settings() {
           >
             {authStatus && authStatus.required && (
               <Row
+                paths="auth.idle_hours"
                 id="idle-hours"
                 label="Sign out after inactivity"
                 help="A device that is kept signed in still signs out after 30 days."
@@ -3606,6 +3972,17 @@ export default function Settings() {
             title="Server"
             blurb="Health of the server, its backups and outside monitoring. Shown when the app runs on a VPS."
           >
+            {data.concurrency && (
+              <Row
+                id="max-requests"
+                label="Requests at once"
+                help="The most requests one batch keeps in flight — model calls in a cycle wave, and each sync job's fetches. Also sizes the HTTP connection pools. Read at start — restart to change."
+              >
+                <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)' }}>
+                  {data.concurrency.max_requests}
+                </span>
+              </Row>
+            )}
             {authStatus && <ServerSection enabled={authStatus.required} />}
           </Section>
           </>)}
@@ -3617,6 +3994,10 @@ export default function Settings() {
             right={data.active_version === null ? 'no saved versions' : `current: v${data.active_version}`}
             blurb="Every saved change is a version with its reason. Decisions record the version they ran under."
           >
+            <SavedValues items={data.saved_without_control ?? []} onUse={(item) => {
+              setTakeConfig(item);
+              setConfigReason(`Take over the config value of ${item.key}`);
+            }} />
             <div style={{ padding: '8px 0 14px' }}>
               <div style={{ overflowX: 'auto', minWidth: 0 }}>
                 <table style={{ width: '100%', minWidth: 520, borderCollapse: 'collapse' }}>
@@ -3719,6 +4100,13 @@ export default function Settings() {
         </div>
       </div>
 
+      <Modal open={takeConfig !== null} title="Use the config value" onClose={() => { if (!configBusy) setTakeConfig(null); }} footer={<>
+        <DialogButton variant="cancel" disabled={configBusy} onClick={() => setTakeConfig(null)}>Cancel</DialogButton>
+        <DialogButton variant="accent" disabled={configBusy || !configReason.trim()} onClick={useConfig}>Use the config value</DialogButton>
+      </>}>
+        <p>{takeConfig?.key}: {JSON.stringify(takeConfig?.saved)} → {JSON.stringify(takeConfig?.config)}</p>
+        <label>Reason<input aria-label="Reason for taking over config" value={configReason} onChange={(e) => setConfigReason(e.target.value)} style={textInput()} /></label>
+      </Modal>
       <ResetAccountDialog
         open={resetOpen}
         busy={resetBusy}
@@ -3731,6 +4119,7 @@ export default function Settings() {
 
 // label (as produced by diffSettings) -> path, for unit suffixes in the bar
 const LABEL_OF: Record<string, string> = {
+  ...FIELD_LABELS,
   'performance.slippage_pct_per_side': 'Assumed slippage',
   'execution.mode': 'Execution mode',
   'execution.entry_limit_offset_pct': 'Entry limit above ask',

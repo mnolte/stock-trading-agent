@@ -26,11 +26,12 @@ from typing import Any
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, load_only, sessionmaker
 
+from app.concurrency import run_batch
 from app.config import AppConfig
 from app.data.aggregate import session_bars
 from app.data.alpaca import AlpacaDataClient
 from app.data.cache import _naive_utc
-from app.data.models import Bar5m, CalendarDay
+from app.data.models import Bar5m, CalendarDay, DataResult
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
 from app.db.models import (
@@ -780,15 +781,35 @@ class OutcomeWorker:
                 )
             session.commit()  # tried marks are durable before any fetch
 
-        for kind, symbol, start, end, sessions in wanted:
+        # Item 078: the window fetches are independent — one request per
+        # row, at most concurrency.max_requests in flight; the bars still
+        # land in the cache one row at a time, in row order.
+        async def fetch(
+            item: tuple[str, str, datetime, datetime, list[CalendarDay]],
+        ) -> DataResult[list[Bar5m]] | None:
+            _kind, symbol, start, end, _sessions = item
             try:
-                fetched = await bar_source.fetch_5m_bars(
-                    [symbol], start, end
+                result: DataResult[list[Bar5m]] = (
+                    await bar_source.fetch_5m_bars([symbol], start, end)
                 )
+                return result
             except Exception:  # noqa: BLE001 - one bad row must not stop the rest
                 logger.exception(
                     "option-touches fetch raised for %s", symbol
                 )
+                return None
+
+        max_requests = max(
+            1,
+            int(self.config.get("concurrency", "max_requests", default=20)),
+        )
+        fetched_rows = await run_batch(
+            wanted, send=fetch, limit=max_requests, kind="sync.option_touches"
+        )
+        for (kind, symbol, _start, _end, sessions), fetched in zip(
+            wanted, fetched_rows, strict=True
+        ):
+            if fetched is None or isinstance(fetched, BaseException):
                 continue
             if fetched.error is not None:
                 logger.warning(

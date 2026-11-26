@@ -4,6 +4,7 @@ import type { ReviewListItem, WeeklyFacts } from '../types/api';
 import {
   decidedLabel,
   dueDayLabel,
+  isStoryVersion,
   isoWeek,
   metaLine,
   numVariant,
@@ -113,6 +114,24 @@ describe('metaLine', () => {
     expect(
       metaLine(item({ source: 'template', reason: 'number check failed' })),
     ).toBe('Written Sat 10 Oct 10:00 · Plain review: number check failed');
+  });
+
+  it('marks story versions and adds the terms hint', () => {
+    expect(isStoryVersion('weekly.v3')).toBe(true);
+    expect(isStoryVersion('briefing.v3')).toBe(true);
+    expect(isStoryVersion('weekly.v2')).toBe(false);
+    expect(isStoryVersion('verdict.v2')).toBe(false);
+    expect(isStoryVersion(null)).toBe(false);
+    expect(
+      metaLine(
+        item({
+          model: 'gpt-4o-mini',
+          prompt_version: 'weekly.v3',
+        }),
+      ),
+    ).toBe(
+      'Written Sat 10 Oct 10:00 · gpt-4o-mini · weekly.v3 · numbers checked ✓ · underlined words explained on hover',
+    );
   });
 });
 

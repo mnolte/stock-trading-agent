@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TypeVar
 
+from app.concurrency import SourceGate
+
 T = TypeVar("T")
 
 
@@ -25,10 +27,20 @@ class RateLimiter:
     Keeps total calls under ``max_calls`` per ``window_seconds``. On 429 or
     timeout, retries reads with exponential backoff; order calls are never
     retried (handled by the broker layer in PR 5).
+
+    ``gate`` is the process-wide per-source priority queue (item 078):
+    requests wait there — live cycle requests first — before touching
+    the window below, which is unchanged.
     """
 
-    def __init__(self, config: RateLimitConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: RateLimitConfig | None = None,
+        *,
+        gate: SourceGate | None = None,
+    ) -> None:
         self.config = config or RateLimitConfig()
+        self._gate = gate
         self._calls: deque[float] = deque()
         self._lock = asyncio.Lock()
 
@@ -44,13 +56,22 @@ class RateLimiter:
         self._calls.append(time.monotonic())
 
     @asynccontextmanager
-    async def call_slot(self) -> AsyncIterator[None]:
-        async with self._lock:
-            await self._acquire()
-        try:
-            yield
-        finally:
-            pass
+    async def call_slot(self, priority: str | None = None) -> AsyncIterator[None]:
+        if self._gate is None:
+            async with self._lock:
+                await self._acquire()
+            try:
+                yield
+            finally:
+                pass
+            return
+        async with self._gate.slot(priority):
+            async with self._lock:
+                await self._acquire()
+            try:
+                yield
+            finally:
+                pass
 
     # Backwards-compatible alias used by the data client.
     read_call = call_slot
@@ -97,6 +118,7 @@ class RateLimiter:
     ) -> T:
         """Run one order call under the rate limit. Never retried: after a
         timeout or error, reconciliation decides what happened (spec: an
-        order is never resent automatically)."""
-        async with self.call_slot():
+        order is never resent automatically). Orders always count as
+        live: protection never queues behind a sync batch."""
+        async with self.call_slot(priority="live"):
             return await asyncio.to_thread(fn, *args, **kwargs)

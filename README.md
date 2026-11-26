@@ -58,11 +58,12 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | --- | --- |
 | `market.*` | Market-data extras: `market.vix.*` collects the VIX close (FRED) and the VIXY reference ETF's bars for display only |
 | `events.*` | Economic releases: `events.fomc.*` the FOMC decision window that blocks new entries, `events.fred_releases.*` the CPI, jobs and PCE release ids fetched from FRED, `events.release_time`, `events.lookahead_days` and `events.next_release_sessions` |
-| `universe.*` | Watched symbols, sectors, screen pool and ranking |
+| `universe.*` | Watched symbols, sectors, screen pool and ranking; `universe.screen.history_fail_data_error_pct` (50) is the share of the previously eligible pool whose history check may fail before the screen counts as a data error |
 | `app.timezone` | Display timezone |
 | `schedule.*` | Cycle times, position checks, calendar and history loading |
 | `api.*` | GUI-facing behaviour: `api.broker_timeout_seconds` bounds a broker read before a card answers stale |
-| `gui.*` | GUI thresholds: `gui.near_stop_atr` marks a position whose stop is within that distance as near its stop |
+| `gui.*` | GUI thresholds: `gui.near_stop_atr` marks a position whose stop is within that distance as near its stop; `gui.log_watch_min_count` is the count from which a recurring warning on Logs shows as "watch" |
+| `concurrency.*` | `concurrency.max_requests` (20, 1–50): most requests one batch keeps in flight; also sizes the HTTP pools; restart to change |
 | `execution.*` | Order shape: limit offset, timeouts, spread and quote guards |
 | `rules.*` | Pre-filter thresholds (RSI, moving averages) |
 | `indicators.*` | Indicator periods: EMA, RSI, ATR, OBV and RS lookbacks, daily SMAs, ATR-percentile window |
@@ -82,7 +83,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | `inspector.*` | LLM call inspector limits |
 | `outcomes.*` | Option-touch backfill: `outcomes.touches_give_up_sessions` is how old the five-session window may be before missing touches become `unavailable` |
 | `logging.*` | Log levels, retention and client-error rate limit |
-| `security.*` | Host allowlist, body caps, export and sender caps |
+| `security.*` | Host allowlist, body caps, export and sender caps, `allow_private_smtp` for a private SMTP relay |
 | `auth.*` | Sign-in session lengths and lockout policy |
 | `ops.*` | Backups, restore checks and heartbeat |
 | `storage.*` | SQLite busy timeout and file locations |
@@ -104,6 +105,10 @@ default is commented in `backend/config.example.yaml`. Blocks:
 - Starts paused after every restart; Pause/Resume, the kill switch and "Stop & flatten" are in the header. A kill switch that was on stays on after a restart.
 - Daily loss limit, drawdown kill switch, no re-entry the same session, earnings blackout.
 - Keys are stored encrypted, shown only as the last 4 characters, and never logged.
+
+## Tests and coverage
+
+CI runs the backend and frontend tests on every pull request. The **`coverage`** job's **Summary** page shows one table with Unit, E2E and All coverage per side (lines and branches, the least-covered files, and the files only the e2e reaches). The combined HTML reports are kept as the `coverage-all` artifact for 7 days; the per-job `coverage-backend` / `coverage-frontend` / `coverage-e2e-*` artifacts hold the unit-only and e2e-only reports.
 
 ## Build plan
 

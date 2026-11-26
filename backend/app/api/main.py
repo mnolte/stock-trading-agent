@@ -4,7 +4,12 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import AsyncGenerator, Callable, Coroutine
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Coroutine,
+)
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
@@ -60,6 +65,7 @@ from app.engine.state import (
     recover_interrupted_cycles,
     set_event_sink,
 )
+from app.errors import safe_error
 from app.llm.base import ModelClient
 from app.llm.clients import make_model_clients
 from app.llm.fake import FakeModelClient
@@ -88,6 +94,12 @@ from app.shadows.portfolio import LiveGateState
 from app.shadows.runner import ShadowRunner
 from app.signals.breadth import BreadthService
 from app.signals.service import SignalService
+from app.syncs import (
+    SyncRuns,
+    tracked_fetch,
+    tracked_fetches,
+    tracked_symbols,
+)
 from app.universe.service import UniverseService
 
 logger = logging.getLogger(__name__)
@@ -148,6 +160,7 @@ async def refresh_calendar_and_daily_data(
     clock: Clock,
     vix: VixService | None = None,
     releases: ReleaseCalendarService | None = None,
+    syncs: SyncRuns | None = None,
 ) -> None:
     """Daily refresh: calendar, earnings, corporate actions, FX, daily bars.
 
@@ -155,26 +168,55 @@ async def refresh_calendar_and_daily_data(
     FRED posts the previous close through the morning. With a
     ``releases`` service it is the 08:00 release-calendar fetch (item
     067): FOMC rows from config plus CPI/jobs/PCE dates from FRED.
+
+    Every source runs under its own ``sync_runs`` row (item 077) so the
+    Universe → Data sync card can show the last run, its duration and
+    its failures.
     """
-    today = clock.now().astimezone(NY_TZ).date()
+    now = clock.now()
+    today = now.astimezone(NY_TZ).date()
     start, end = calendar_load_range(config, today)
     await calendar_store.load(start, end)
     # Independent sources fetched together — the calendar must load first
-    # (the daily refresh resolves sessions through it).
-    tasks = [
-        market_data.refresh_earnings(
-            today - timedelta(days=30), today + timedelta(days=90)
-        ),
-        market_data.refresh_corporate_actions(
-            today - timedelta(days=30), today + timedelta(days=90)
-        ),
-        market_data.refresh_daily(today),
-        sources.fx.fetch_fx(today),
-    ]
+    # (the daily refresh resolves sessions through it). The two FRED-fed
+    # fetches share one "fred" row; the rest get one each.
+    fred_fetches: list[
+        tuple[str, Callable[[], Awaitable[Any]]]
+    ] = []
     if vix is not None:
-        tasks.append(vix.refresh(today))
+        fred_fetches.append(("VIX (FRED)", lambda: vix.refresh(today)))
     if releases is not None:
-        tasks.append(releases.refresh(today))
+        fred_fetches.append(
+            ("release calendar", lambda: releases.refresh(today))
+        )
+    tasks: list[Any] = [
+        tracked_fetch(
+            syncs,
+            "earnings",
+            lambda: market_data.refresh_earnings(
+                today - timedelta(days=30), today + timedelta(days=90)
+            ),
+        ),
+        tracked_fetch(
+            syncs,
+            "corporate_actions",
+            lambda: market_data.refresh_corporate_actions(
+                today - timedelta(days=30), today + timedelta(days=90)
+            ),
+        ),
+        tracked_symbols(
+            syncs,
+            "daily_bars",
+            market_data.universe(),
+            lambda symbols, on_symbol: market_data.refresh_daily(
+                today, now, symbols=symbols, on_symbol=on_symbol
+            ),
+            "daily bars",
+        ),
+        tracked_fetch(syncs, "ecb", lambda: sources.fx.fetch_fx(today)),
+    ]
+    if fred_fetches:
+        tasks.append(tracked_fetches(syncs, "fred", fred_fetches))
     results: list[Any] = await asyncio.gather(*tasks)
     market_data.latest_fx = results[3]
 
@@ -189,10 +231,12 @@ async def refresh_daily_data_and_signals(
     bus: UpdateBus | None = None,
     vix: VixService | None = None,
     releases: ReleaseCalendarService | None = None,
+    syncs: SyncRuns | None = None,
 ) -> None:
     """The scheduled daily refresh, followed by a stored-snapshot refresh."""
     await refresh_calendar_and_daily_data(
-        calendar_store, market_data, sources, config, clock, vix, releases
+        calendar_store, market_data, sources, config, clock, vix, releases,
+        syncs,
     )
     await signals.refresh()
     if bus is not None:
@@ -200,18 +244,22 @@ async def refresh_daily_data_and_signals(
 
 
 async def run_vix_refresh(
-    vix: VixService, bus: UpdateBus | None = None
+    vix: VixService,
+    bus: UpdateBus | None = None,
+    syncs: SyncRuns | None = None,
 ) -> None:
     """The 17:00 New York VIX refresh — picks up the day's FRED posting
     (docs/SPEC.md, VIX). The next cycle carries the fields; this only
     refreshes the store and the Settings data-source tile."""
-    await vix.refresh()
+    await tracked_fetch(syncs, "fred", lambda: vix.refresh())
     if bus is not None:
         bus.publish("settings", "banners")
 
 
 async def retry_vix_refresh(
-    vix: VixService, bus: UpdateBus | None = None
+    vix: VixService,
+    bus: UpdateBus | None = None,
+    syncs: SyncRuns | None = None,
 ) -> None:
     """Retry the VIX fetch every 15 minutes while the last one failed.
 
@@ -222,7 +270,7 @@ async def retry_vix_refresh(
     """
     if vix.latest is None or vix.latest.error is None:
         return
-    result = await vix.refresh()
+    result = await tracked_fetch(syncs, "fred", lambda: vix.refresh())
     if bus is not None and result.error is None:
         bus.publish("settings", "banners")
 
@@ -281,7 +329,7 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = No
                 clock,
                 level="warning",
                 event_type="backup_failed",
-                details={"error": str(exc)},
+                details={"error": safe_error(exc)},
             )
             session.commit()
         # No copy on disk — nothing older than the keep window is pruned
@@ -322,7 +370,7 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = No
                     clock,
                     level="warning",
                     event_type="backup_failed",
-                    details={"error": f"offsite: {exc}"},
+                    details={"error": f"offsite: {safe_error(exc)}"},
                 )
                 session.commit()
 
@@ -410,7 +458,7 @@ async def ensure_broker_guard(broker: Any, clock: Clock, session_factory: Any) -
             if not ok:
                 details = {"read_back": cfg, "error": read.error}
     except Exception as exc:  # noqa: BLE001
-        details = {"error": str(exc)}
+        details = {"error": safe_error(exc)}
     if details:
         with session_factory() as session:
             record_event(
@@ -710,7 +758,7 @@ def check_models_at_startup(config: AppConfig) -> None:
         try:
             check_models(config, session)
         except (ValueError, UnpricedModelError) as exc:
-            raise RuntimeError(f"Refusing to start: {exc}") from exc
+            raise RuntimeError(f"Refusing to start: {safe_error(exc)}") from exc
 
 
 def check_prompt_versions_at_startup(config: AppConfig) -> None:
@@ -746,7 +794,7 @@ def check_prompt_versions_at_startup(config: AppConfig) -> None:
         for version in versions:
             prompt_spec(version)
     except UnknownPromptVersion as exc:
-        raise RuntimeError(f"Refusing to start: {exc}") from exc
+        raise RuntimeError(f"Refusing to start: {safe_error(exc)}") from exc
 
 
 def check_execution_mode(config: AppConfig) -> None:
@@ -754,6 +802,47 @@ def check_execution_mode(config: AppConfig) -> None:
     mode = str(config.get("execution", "mode", default="automatic"))
     if mode not in ("automatic", "supervised"):
         raise RuntimeError(f"Refusing to start: unknown execution.mode {mode!r}")
+
+
+def check_concurrency(config: AppConfig) -> None:
+    """``concurrency.max_requests`` is an integer 1-50 (item 078).
+
+    It sizes every batch and the HTTP pools, so a bad value refuses
+    startup rather than degrading mid-run.
+    """
+    raw = config.get("concurrency", "max_requests", default=20)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 0
+    if isinstance(raw, bool) or not 1 <= value <= 50:
+        raise RuntimeError(
+            f"Refusing to start: concurrency.max_requests must be an "
+            f"integer 1-50, got {raw!r}"
+        )
+
+
+def check_universe_screen(config: AppConfig) -> None:
+    """``universe.screen.history_fail_data_error_pct`` is an integer
+    1-100 (item 093).
+
+    It decides when a mass history failure counts as a screen-wide data
+    error, so a bad value refuses startup rather than firing at the
+    wrong share mid-screen.
+    """
+    raw = config.get(
+        "universe", "screen", "history_fail_data_error_pct", default=50
+    )
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, int)
+        or not 1 <= raw <= 100
+    ):
+        raise RuntimeError(
+            "Refusing to start: universe.screen."
+            "history_fail_data_error_pct must be an integer 1-100, "
+            f"got {raw!r}"
+        )
 
 
 def schedule_cycle_jobs(
@@ -791,12 +880,18 @@ def schedule_cycle_jobs(
 def load_saved_settings(config: AppConfig) -> None:
     """Apply the newest settings_versions row over the YAML defaults."""
     from app.db.base import get_session_maker
-    from app.settings_service import latest_version
+    from app.settings_service import latest_version, refresh_saved_without_control
 
     with get_session_maker()() as session:
         row = latest_version(session)
         if row is not None:
             config.apply_saved(dict(row.settings), row.version)
+        refresh_saved_without_control(config, session)
+    if config.saved_without_control:
+        logger.warning(
+            "saved values differ from config: %s",
+            ", ".join(item["key"] for item in config.saved_without_control),
+        )
 
 
 def ensure_run_row(broker: Broker, clock: Clock, config: AppConfig) -> None:
@@ -937,6 +1032,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # them; the execution-mode check sees the effective mode.
     load_saved_settings(config)
     check_execution_mode(config)
+    check_concurrency(config)
+    check_universe_screen(config)
     check_models_at_startup(config)
     check_prompt_versions_at_startup(config)
 
@@ -989,6 +1086,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config,
         file_fallback=pipeline.file_handler,
         on_warning_or_above=_on_warning_or_above,
+        clock=clock,
     )
     if index_handler is not None:
         pipeline.add_handler(index_handler)
@@ -1029,6 +1127,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         check_route_coverage(app)
 
+    # Item 081 step 4: one-time scrub of stored rows now that every
+    # secret provider is registered — runs once, flagged by its event.
+    from app.stored_scrub import run as run_stored_scrub
+
+    run_stored_scrub(get_session_maker(), clock)
+
+    # Item 081 step 7: ops.heartbeat_url becomes a write-only secret —
+    # imported from config once, then blanked out of settings versions.
+    from app.stored_scrub import migrate_heartbeat
+
+    migrate_heartbeat(get_session_maker(), config, secrets_store, clock)
+
     sources = make_data_sources(config, secrets_store)
     if config.env.mode != "simulated":
         await startup_key_checks(secrets_store, key_testers, sources)
@@ -1060,6 +1170,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     release_service.sync_fomc()
     signal_service = SignalService(market_data, calendar_store, config, clock)
+    # Sync-run records for the Universe → Data sync card (item 077):
+    # every data job writes its own row; the GUI only reads them.
+    sync_runs = SyncRuns(get_session_maker(), clock, config, calendar=calendar_store)
     # The llm_cache is shared: live and shadows write through to it (never
     # read it), backtests read it — a rerun on identical inputs is free.
     llm_cache = LLMCacheStore(get_session_maker(), clock)
@@ -1120,6 +1233,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if config.env.mode != "simulated"
             else None
         ),
+        releases=release_service,
     )
     position_checker = PositionChecker(
         executor=executor,
@@ -1150,6 +1264,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         vix=vix_service,
         breadth=breadth_service,
         releases=release_service,
+        syncs=sync_runs,
     )
     def live_gate_state() -> LiveGateState:
         from app.db.base import get_session_maker
@@ -1200,18 +1315,38 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config=config,
         clock=clock,
         notify=lambda: bus.publish("universe", "banners", "header", "attention"),
+        syncs=sync_runs,
     )
     await refresh_calendar_and_daily_data(
         calendar_store, market_data, sources, config, clock, vix_service,
-        release_service,
+        release_service, sync_runs,
     )
+    if config.env.mode != "simulated":
+        # Item 108: once, rewrite corporate actions fetched before stock
+        # dividends were parsed as their own type — from the oldest
+        # run's start through today + 90 days. The event flag makes it
+        # a no-op on every later boot; a failed fetch retries next
+        # start.
+        from app.data.corporate_repair import repair_corporate_actions_once
+
+        await repair_corporate_actions_once(
+            get_session_maker(), market_data, clock, config
+        )
     today = clock.now().astimezone(NY_TZ).date()
     # The sector ETFs join the history fill like the universe: the
     # cycle's 3-day top-up alone would never reach the 20-bar
     # relative-strength window (item 068).
-    await market_data.refresh_history(
-        today,
-        symbols=market_data.universe() + breadth_service.reference_symbols(),
+    history_symbols = (
+        market_data.universe() + breadth_service.reference_symbols()
+    )
+    await tracked_symbols(
+        sync_runs,
+        "history",
+        history_symbols,
+        lambda symbols, on_symbol: market_data.refresh_history(
+            today, symbols=symbols, on_symbol=on_symbol
+        ),
+        "5m bars",
     )
 
     # The pool seeds once at startup; the daily screen runs from its
@@ -1413,6 +1548,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.secrets_store = secrets_store
     app.state.key_testers = key_testers
     app.state.market_data = market_data
+    app.state.syncs = sync_runs
     app.state.vix = vix_service
     app.state.releases = release_service
     app.state.signal_service = signal_service
@@ -1489,6 +1625,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             bus,
             vix_service,
             release_service,
+            sync_runs,
         ],
         id="daily-data-refresh",
         misfire_grace_time=misfire_grace,
@@ -1500,7 +1637,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler.add_job(
         run_vix_refresh,
         CronTrigger(hour=17, minute=0, timezone=NY_TZ),
-        args=[vix_service, bus],
+        args=[vix_service, bus, sync_runs],
         id="vix-refresh",
         misfire_grace_time=misfire_grace,
         coalesce=True,
@@ -1511,7 +1648,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler.add_job(
         retry_vix_refresh,
         IntervalTrigger(minutes=15),
-        args=[vix_service, bus],
+        args=[vix_service, bus, sync_runs],
         id="vix-refresh-retry",
         misfire_grace_time=misfire_grace,
         coalesce=True,
@@ -1712,9 +1849,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     heartbeat_task = spawn(_heartbeat(), "run-lock-heartbeat")
 
+    # Break-glass kill switch (item 083): the app itself watches
+    # data/kill.request every 5 s on this loop, so a lost sign-in can
+    # still stop trading from the server shell.
+    from app.ops.kill_switch import watch_kill_requests
+
+    kill_watch_task = spawn(
+        watch_kill_requests(
+            executor,
+            config.env.sa_data_dir,
+            shutdown_manager,
+        ),
+        "kill-request-watch",
+    )
+
     try:
         yield
     finally:
+        kill_watch_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await kill_watch_task
         # Clean shutdown (docs/SPEC.md). A second Ctrl+C/SIGTERM during
         # this block skips the grace wait — cleanup still runs.
         import signal as _signal

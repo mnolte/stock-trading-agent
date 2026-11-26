@@ -1,6 +1,33 @@
-# Design changes
+# Design changes (up to item 101 — later items: one file each in design/changes/)
 
 Newest first. Each entry names the screens it touches.
+
+## 2026-11-14 — [101] A switch for last-cycle entries; saved values without a control
+
+Marc, 14 Nov: "I want a button I can flip." Build: kickoff `101-feat-last-cycle-switch-and-saved-values.md`.
+
+- **`Settings.dc.html` → Schedule:** a switch under the cycle table, **New entries in the last cycle**, with what on and off do and that turning it on asks to confirm. The intro says it is the one thing that can be changed here. New `Settings-schedule.png`.
+- **`Settings.dc.html` → Settings history:** an amber block on top, "2 saved values differ from the config and have no control": the setting with its key, the saved value (in use), the config value, the version it dates from, and **Use the config value** per row; the text for an empty list is in the block's last line. New `Settings-stored.png`.
+- `Settings.png`, `-1024` and `-390` are unchanged (they show Risk limits).
+
+## 2026-11-14 — [100] UX pass on the screens the 11 Nov pass left out
+
+Marc asked on 14 Nov for another pass on the design. Items 073–079 covered the dashboard, the inspector, Insights, Performance, Universe and Reviews; this pass covers the rest. Every screen was read at 1440 px and 390 px. Build: kickoff `100-feat-ux-pass-remaining-screens.md`.
+
+- **`Strategies.dc.html`:** the small-sample banner moves above the Compare table and says what is needed ("from 20 closed trades per strategy"); the kind chip (live, shadow, baseline) sits in the name cell, so the return is the second column and shows on a phone (was: only the name and the chip); Closed trades carries a bar to the 20 a comparison needs; "Same as live" shows its count ("86% of 212"); a hyphen became a minus sign in two cells. **New shadow…** is unavailable with its reason beside it ("All 3 slots in use · archive a shadow to add one"). The selected strategy is a left-aligned label–value grid (was: right-aligned text that wrapped), with a Synthetic prices row and "Promote needs 20 closed trades · B has 4." under the buttons. **Where B and live disagreed:** a tally sentence, a filter (All, B better, Live better, Not decided), rows newest first (they were out of order) with both actions, the result in words, who was better, and links to both decisions; rows stack on a phone (the actions used to sit in a 40 px column). `Strategies.png`, `Strategies-390.png`.
+- **`Backtest.dc.html`:** Runs sits above the form, so a running backtest is on the first screen; the estimate is "Before you run": two verdict lines (fits the budget, starts after the knowledge cutoff) and one row per number (was a 2 × 2 grid that wrapped); the run's title is followed by its actions, renamed **View 802 trades** and **View decisions** ("Open trades" read as trades still open), an answer sentence written by code, and "evidence about the past, never a forecast". On a phone the order is runs, results, form, with "On this page" chips. `Backtest.png`, `Backtest-390.png`.
+- **`Logs.dc.html`:** Recurring problems gets a **Does it need you?** column (needs you, watch, nothing to do, with the count under it), the three counts above the table, and is sorted by what needs Marc; the level chip moves into the Problem cell; on a phone each problem is a stacked row. Log rows on a phone: time and level on one line, the message at full width under them (it used to sit in an 80 px column, one or two words per line). `Logs.png`, `Logs-390.png`.
+- **`Readiness.dc.html`:** the verdict banner is neutral, not red, and carries the count ("Not ready for live trading · 8 of 17 criteria pass", "That is expected 9 sessions into a run"); six tiles in the tile grid (two per row on a phone; they were one per row); a new card **What moves this forward** (three things to act on now, each with one button; what only time fixes; the manual items); status chips read "building up" (blue), "below target" (red) and "needs data" (neutral) instead of "not yet" and "waiting for data". `Readiness.png`, `Readiness-390.png`.
+- **`Positions.dc.html`:** each position has three links (Chart, Ask about this position, Latest decision); Today ends in one line, with the day-trade note on hover; Order history has the order (symbol, side, leg, time) and its status as the first two columns, so both show on a phone, and its rows are newest first (two were out of order); a long status wraps. `Positions.png`, `Positions-390.png`, `Positions-1024.png`. `AskDrawer.dc.html` shows the same page next to the drawer and got the same changes (`AskDrawer.png`, `AskDrawer-390.png`).
+- **`Settings.dc.html`:** below 760 px the unsaved-changes bar is one line ("2 unsaved changes · Review and save") that opens to the changes, the reason and Discard / Save as v4. It used to cover a quarter of a phone screen. `Settings-390.png`, new `Settings-390-save.png`. Desktop is unchanged. **Display** gets a third row, "Recurring warning counts as “watch” from" (5 times), for the Logs rule above.
+- **`Errors.dc.html`:** at 390 px the four in-app pages show the phone shell; the sidebar no longer squeezes the text into 145 px. `Errors-390.png`. Texts unchanged.
+- **`States.dc.html` → Empty states** (new section after Card states): one text per card, 23 rows over 10 screens, each "what is empty" plus "what will fill it or what to do", with at most one action; two example cards. `States.png`.
+- **`DESIGN.md` → Rules:** a control that can't be used says why; empty states; statuses say what is needed; sticky bars on a phone; "Does it need me?" also on Logs; a note on the second `<style>` block that holds a screen's own phone rules.
+- **Not changed, on purpose:** Main, Inspector, Insights, Performance, Universe, Reviews (passed on 11 Nov; checked again for squeezed text and sideways scroll, none found), Login, the Ask drawer's own states, Loading, and the decision drawers.
+
+## 2026-11-12 — [074] LLM inspector UX (build)
+
+- **`Inspector.dc.html` implemented:** attention chips (Nothing to do / Keep an eye on it / Needs you) on rows, details and Top reasons; a "What happened" panel per reason with What it means / Why here / What to do and links; Top reasons rows that filter the list; repeated calls fold into one row that opens in place; input renders as labelled sections with a Raw JSON toggle; the answer renders as label–value rows; ↑ Newer / ↓ Older buttons with K/J and arrow keys; the success line reads "Valid · used as the model chose." Phone layout stacks the label–value rows.
 
 ## 2026-11-11 — [080] Security audit: Settings and Sign in
 

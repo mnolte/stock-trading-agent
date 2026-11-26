@@ -79,3 +79,18 @@ export const REASON_CODES: Record<string, string> = {
   liquidity: 'Liquidity',
   entry_cutoff: 'Too close to the close',
 };
+
+/** The latest-decision card's no-call line (item 073): the lowercase
+ * phrase before the colon — "pre-filter: RSI 74 is above 70",
+ * "call cap: 10 calls went to higher-ranked symbols". */
+export const NO_CALL_REASONS: Record<string, string> = {
+  rules: 'pre-filter',
+  call_cap: 'call cap',
+  checks: 'trend gate',
+  no_options: 'no options',
+  price_stale: 'price check',
+  price_suspect: 'price check',
+  quote_suspect: 'price check',
+  model_error: 'model error',
+  reference_missing: 'reference price',
+};

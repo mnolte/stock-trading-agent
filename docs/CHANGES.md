@@ -1,4 +1,4 @@
-# Spec changes
+# Spec changes (up to item 101 — later items: one file each in docs/changes/)
 
 Newest first.
 
@@ -10,6 +10,291 @@ Issue #206, with the overnight-holding measurements requested for item 113 (#339
 - **Holding overnight:** entries and skips by cycle with the stored-conflict match patterns; target/stop/neither outcomes of skipped late candidates; last-cycle holds against exits with counterfactual next-open, next-close and 5-session R (gaps included); splits by stop distance against the usual overnight gap and by earnings or an 08:30 release the next morning; candidate v7 holding-period wording with the evidence behind it.
 - **`make analysis-061`:** reruns the read-only analysis from a SQLite backup copy of `data/stock-agent.db`. The script is in `backend/scripts/analysis/market_context_061.py`; no network is used.
 - **Data limits named in the report:** no completed 12-month backtest is recorded; this window has no v5/v6 shadow rows because the active shadows are decision.v2 and rules-only; `cycles.next_release` is empty in the copied data, so release slices stay empty instead of treating null as no release.
+
+## 2026-11-15 — [100] UX pass on Readiness and Logs (build, PR 2 of 3)
+
+Second build PR for item 100 (#296). The stored readiness statuses are unchanged; the screen words them by what is needed and adds the "What moves this forward" card, written by code from the stored snapshot. Logs recurring problems carry "Does it need you?" (act / watch / nothing to do) from the same unreviewed-error rule Readiness uses, sorted by it and counted above the list; the summary honours the chosen period.
+
+- **Config:** new `gui.log_watch_min_count` (5, 1–1000) — the count from which a recurring warning shows "watch". In `backend/config.example.yaml`, the README table and Settings → Display.
+
+## 2026-11-15 — [101] Last-cycle switch and saved-values recovery (build)
+
+Settings → Schedule now offers the last-cycle entry switch, including unsaved preview and loosening confirmation. Settings → History lists saved settings without controls that differ from the YAML layers and can save the config value with a reason and confirmation. Needs you and the History section show the count. The frontend and backend share the control-key manifest; API-only cycle times and the two unrendered Readiness thresholds leave the ordinary edit allowlist. Saved values never change automatically. No spec or design files changed.
+
+## 2026-11-14 — [101] A switch for last-cycle entries; saved values without a control (spec)
+
+Follows item 098. Marc decided on 14 Nov: the last-cycle rule gets a button on the Settings screen, and saved values keep winning over the config file but must be visible. Kickoff `101-feat-last-cycle-switch-and-saved-values.md`, issue #298. No change to what the rule does.
+
+- **Config layers → Saved values without a control:** code lists every setting whose saved value differs from the config file and that has no control. Settings → History shows the list with **Use the config value**; Needs you shows one item while it isn't empty; a test requires a control for every setting the API accepts.
+- **GUI → Settings screen → Schedule:** the switch **New entries in the last cycle**. Turning it on asks "Confirm it is you".
+- **GUI → Needs you:** one more row at order 7.
+- **Rules pre-filter:** the last-cycle paragraph names the switch. **Build plan** item 58.
+- Rejected: letting settings without a control follow the config file on every save. An unrelated save could then change a trading rule, and a version would stop being a full record.
+
+## 2026-11-14 — [100] UX pass on the screens the 11 Nov pass left out (spec)
+
+Marc asked on 14 Nov for another pass on the design. Items 073–079 covered the dashboard, the inspector, Insights, Performance, Universe and Reviews. This pass read the other screens at 1440 px and 390 px. One work item, kickoff `100-feat-ux-pass-remaining-screens.md`, issue #296, three build PRs. No trading behaviour changes. The design side is in `design/CHANGES.md` [100].
+
+- **GUI → Interaction and states:** three rules for every screen. A control that can't be used says why, as text beside it. An empty card says what is empty and what will fill it, from fixed texts in `design/screens/States.dc.html`. A bar that sticks to the bottom of a phone screen is one line and opens on tap.
+- **GUI → Positions at a glance:** three links per position (Chart, Ask about this position, Latest decision); order history with the order and its status as the first two columns, newest first.
+- **GUI → Settings screen:** the unsaved-changes bar on a phone. Settings → Display gets `gui.log_watch_min_count`.
+- **Strategies and shadows → GUI:** small samples first; the columns; reasons on New shadow and Promote; the synthetic-price count per strategy; disagreements with **who was better**, decided by code only where one side entered and the other didn't, a tally over the whole run and a filter. The API gives `better`, the shadow's decision id and the three counts.
+- **Backtesting → GUI:** runs before the form; the estimate opens with a budget line and a cutoff line; the results header has the actions (View n trades, View decisions, Download CSV), an answer sentence written by code and stored with the run, and "evidence about the past, never a forecast".
+- **Readiness → GUI:** the stored statuses stay; the screen words them by what is needed (building up, below target, needs data). A neutral verdict banner with the count. A **What moves this forward** card written by code from the snapshot, with one sentence and one button per below-target criterion from a fixed table.
+- **Logs screen:** recurring problems carry "Does it need you?" (needs you, watch, nothing to do), are sorted by it and counted above the list. New setting `gui.log_watch_min_count` (5): the count from which a recurring warning shows "watch". It goes into the example config in the build PR, with the README table. Log lines stack on a phone.
+- **Error pages → GUI:** in the phone shell below 820 px.
+- **Build plan** item 57.
+
+## 2026-11-14 — [098] Last-cycle entries setting (build)
+
+`schedule.last_cycle_no_entries` joins `EDITABLE` as a bool, so a settings save can finally change it. Every `settings_versions` row since 18 Oct carried the pre-071 `true`, and saved trees merge over the YAML — the 071 default flip never reached installs with a saved version, and no in-app path could fix it. The key stays display-only on the Schedule card (spec: Schedule is read-only; `schedule.cycles` is likewise API-editable with no control), so the change is API-only for now — the GUI control and the wider question of GUI-hidden keys following YAML defaults are open in the PR. Turning the flag off is a loosening ("off" in `DIRECTIONS`) and asks "Confirm it is you". No spec text changed.
+
+## 2026-11-13 — [099] Dashboard page matches Main.dc.html (build)
+
+Design-fidelity pass on `design/screens/Main.dc.html` beyond the briefing card fixed in 097. Card labels are 13 px with 14 px gaps and the design's padding; dashboard rows use the design's flex bases (chart `999 1 600px`, positions 520 px, risk budget 420 px, 20 px gaps); the positions heading reads "Open positions · N of M" with matching aria-labels; the chart is 320 px with the design's legend swatches and dashed VWAP; Latest decision uses the design's badge and signal colours, 16 px symbol and earnings chip; the feed heading keeps the curly apostrophe with 10 px row gaps; the cycle strip renders the design's bold/muted sentence, 15 px countdown and the release line's border and tooltip; Needs you gets the Ask icon and label and the design's health line; the watchlist matches the design's header wording, tabs, rank column, footer and show-all control; shared header gaps, chip weight, stop-tick colour and the centred 1440 px layout follow the design. No spec text changed.
+
+## 2026-11-13 — [097] Dashboard briefing card and Reviews match the design screens (build)
+
+Design-fidelity pass on `design/screens/Main.dc.html` and `Reviews.dc.html`. The briefing status line is the design's subtle strip (shared `StatusLine` component) on the dashboard card and the Reviews briefing view; trade and skip dates carry the month (`Thu 8 → Fri 9 Oct`, `Wed 7 Oct`); the briefings explainer keeps `(15:00 Amsterdam)` and `(briefing.v3)`; the verdicts card regains its explainer row with a neutral `Confirm all N drafts` button, and the verdict buttons match the design's 36 px / 6 px-radius / 13 px metrics with `Change…` as a real disclosure that keeps `Decision →` visible. No spec text changed.
+
+## 2026-11-13 — [093] Universe screen: live history detail, mass history fail (build)
+
+Build PR of 093 on branch `fix/093-stale-screen-detail` (no issue). Marc decided option B on 13 Nov, plus a screen rule the kickoff did not list.
+
+- `UniverseService.describe` recomputes the history check live for screened rows whose stored `failed_check` is `history` (status other than `warming_up`): the row gains `history_now` (`loaded`, `detail`) and `screen_date`; status, rank, fails and the stored detail stay the screen's record. Display only — nothing cycles read changes.
+- A history check failing for `universe.screen.history_fail_data_error_pct` (50) percent or more of the symbols eligible at the previous screen is a screen-wide data error: `_run_screen` raises `ScreenError` before any row is written, so no fail count moves and the previous list stays. New config key (integer 1–100, refuses to start otherwise), in `config.example.yaml` and the README table.
+- SPEC.md: one sentence in "Daily screen" and one bullet under "Status per symbol". The GUI line itself is new wording — noted under "Design differences" in the PR for `design/` to pick up.
+
+## 2026-11-13 — [096] Strategy db path built from stored values (build)
+
+Follow-up to 095 for the remaining `py/path-injection` alerts: `_strategy_sf` built `run-<id>/<slug>.db` from the request's `run_id` and `slug` path parameters. The slug was already whitelist-checked and matched against the run's strategies; the path now uses the row id and the matched stored slug, so request values are lookups only, never path expressions. No spec text changed.
+
+## 2026-11-13 — [095] Backtest delete never uses the stored run_dir (build)
+
+Fix for the CodeQL `py/path-injection` alert on `BacktestManager.delete`: the folder passed to `shutil.rmtree` came from the `run_dir` column, which static analysis treats as uncontrolled. `run_dir` is only ever written as `str(run_dir_for(config, id))`, and the worker and API already derive every run path from the id — `delete()` and `refresh_sizes()` now do the same, so stored text can never pick a path. No spec text changed.
+
+## 2026-11-13 — [092] Daily bars: no source gap before the session closes (build)
+
+Build PR of 092 on branch `fix/092-premature-source-gaps`.
+
+- `MarketDataService.refresh_daily` takes `now` — the fetch time, injected from the callers' clocks, never `datetime.now()`. A session's absence is written to `daily_source_gaps` only once its New York date is safely past: a session still open, or just closed while the vendor may still be publishing its daily bar, stays missing and is asked for again on the next refresh instead of becoming a permanent source gap. Every caller passes its clock: the 08:00 scheduled refresh, the sync retry, the universe history warm-up, the VIX refresh and smoke-data.
+
+## 2026-11-13 — [094] rules_only backtests answer through the wave API (build)
+
+Fix for a regression from 078 (PR #266): the cycle's prepare/send/finish waves call `decide.prepare_call`/`send_call`/`finish_call` and never `decide()`, so `RulesOnlyDecisionService`'s override was bypassed and rules-only backtests went through the fake model client — which only enters for MSFT — producing empty books and a red `backend-slow` on main since `fe181dd`. The service now implements the wave API: prepare delegates to the base class, send is a no-op and finish stores the same deterministic enter/hold decision as before. No spec text changed.
+
+## 2026-11-13 — [093] Universe screen: stale detail and no re-run (work item)
+
+New fix item from the same 13 Nov incident: after the daily bars were backfilled, the Universe page kept showing the 08:10 screen's "258 of 259 daily bars" detail and there is no way to re-run the screen in paper mode. The kickoff (`docs/kickoffs/093-fix-stale-screen-detail.md`) frames the spec question — re-run on demand vs live detail for screened rows vs accept the staleness. No spec text changed.
+
+## 2026-11-13 — [092] Daily bars: no source gap before the session closes (work item)
+
+New fix item from the 13 Nov live incident: the pre-market daily refresh marked the still-open session as a source-confirmed gap, gap dates are never refetched, and every symbol sat at "Warming up" with no entries all day. The kickoff (`docs/kickoffs/092-fix-premature-source-gaps.md`) sets the rule — a session's absence is a gap only once it has closed — and the false gap rows for 2026-11-12 were already deleted by hand. No spec text changed.
+
+## 2026-11-13 — [083] Sign-in resilience (build)
+
+Build PR of 083 on branch `feat/083-sign-in-resilience` (issues #243, #244).
+
+- **Known browsers:** a completed sign-in mints a trusted-device cookie (`__Host-sa_device`, `sad_` token, 180 days, HttpOnly, SameSite=Strict; `sa_device` on plain-http loopback). At most 10 per account; the oldest by last use goes. A valid one lifts only the global sign-in pause — the password, the code and the per-address lockout still apply. `auth.lockout_failures` wrong steps inside `auth.lockout_window_minutes` revoke the row and clear the cookie. A password change, "Sign out everywhere" and new recovery codes revoke every device; Settings → Access → Known browsers lists them and removes one behind "Confirm it is you". `GET /api/auth/status` gains `paused_until` and `known_device`; the sign-in page shows the pause with its end time and disables the form for unknown browsers, and an amber note for known ones.
+- **Break-glass kill switch:** `python -m app.ops.kill_switch --reason "…" [--flatten] [--status]` writes `data/kill.request` (JSON, 0600, `O_EXCL`) and waits up to 30 s for `kill.result`; the app polls the file every 5 s inside its own loop — read, never executed — and runs the same code path as the button with event source `cli`. It never resumes trading. DEPLOY.md gains "If you can't sign in".
+- **WebSocket sessions:** the feed re-checks its session every 60 s and closes 1008 `session_expired`; sign-out, sign out everywhere, a password change and device removal close the affected sockets at once through the AuthService registry. `security.max_sockets` (20) caps open sockets — a new one closes the oldest — and applies with `SA_AUTH=off` too.
+
+## 2026-11-13 — [082] Confirm every loosening (build)
+
+Build PR of 082 on branch `feat/082-confirm-every-loosening` (issue #239, audit S2).
+
+- **One direction map, in the backend.** `settings_service.DIRECTIONS` gives every leaf setting in `risk`, `execution`, `rules`, `regime`, `events`, `decision` (all gate versions), `selection`, `schedule` and `universe` its direction — up, down, on, off, wider, longer, shorter or neutral with a comment. `GET /api/settings` returns it as `directions`; the tighter/looser tags (item 069) and the frontend's own map are gone — the GUI reads the API's.
+- **`classify` + `confirm_fields`.** A save's diff is classified per leaf; any looser change asks "Confirm it is you", as do supervised → automatic, an alert event losing a channel, longer quiet hours, fixed → screened, and a live model or prompt change. A covered key with no map entry counts as looser (fails closed; a test walks `config.example.yaml`). The 403 `confirm_required` answer carries `fields` — `{key, label, old, new}` for each change — and the confirm dialog lists them.
+- **Access text.** Settings → Access shows the design's "Confirm before risky actions" row.
+
+## 2026-11-13 — [084] Supply chain and containers (build, part 2)
+
+Second build PR of 084 on branch `ops/084-containers-audits-backups`
+(issues #245, #248, #249).
+
+- **Containers (S12):** Caddy gets `read_only`, `tmpfs /tmp`,
+  `cap_drop ALL` + `NET_BIND_SERVICE`, `no-new-privileges` and
+  `pids_limit 128`; the app gets `pids_limit 256`. The runtime image
+  ships no `backend/tests` or `backend/eval`, and `/srv` is root-owned,
+  world-readable, not writable by uid 10001 — everything writable stays
+  on `/data`. `.dockerignore` now also excludes `backend/config.yaml`,
+  `**/secret.key`, `**/*.db*`, `backups`. `provision.sh` lets
+  unattended-upgrades cover Docker's own repo (`"Docker:${distro_codename}"`).
+- **Audits (S11):** `security/run-audits.sh --all` audits the dev sets
+  too (`uv export --extra dev`, `pnpm audit` without `--prod`) and
+  prints a markdown table via `security/audit_table.py`; it never fails.
+  The weekly CI run posts the table to the job summary. `minimatch` is
+  bumped to 11.0.5 through a pnpm override past GHSA-g3hv-75wg-m249 —
+  eslint's `^10` ranges block 11.x, so the override was needed.
+- **Backup delete protection (S8):** the monthly restore test asks the
+  bucket `GetBucketVersioning` with one SigV4-signed request (path-style,
+  region from `AWS_REGION`/`AWS_DEFAULT_REGION`/`us-east-1`) and stores
+  `delete_protection` on/off/unknown/ suspended with the result — a
+  failure is "unknown" and never blocks. Settings → Server → Backups
+  shows "Delete protection": green `on` or amber "not confirmed".
+  `docs/DEPLOY.md` requires versioning or object lock with ≥30 days'
+  retention, with the AWS CLI commands and the note that the app's key
+  needs no delete-version permission.
+
+## 2026-11-13 — [085] CSV formulas and outbound addresses (build)
+
+Build PR of 085 on branch `fix/085-csv-formulas-and-outbound-addresses`.
+
+- **`app/csv_safe.py`**: the one CSV writer. A text cell starting with
+  `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`; a
+  test walks `app/` and fails on any `csv.writer` outside the helper.
+  Both exports (LLM calls, backtest trades/decisions) use it.
+- **Checked at use**: the heartbeat ping resolves the host at every
+  ping and connects to the checked address with the original Host and
+  SNI, no redirects; the backup endpoint is resolved before each
+  restic run (restic resolves again itself — noted in a comment); the
+  SMTP host must resolve public at save, at test and at send unless
+  `security.allow_private_smtp` (new key, default false) is on —
+  loopback is refused even then. A refused SMTP host answers 422 "must
+  not point at a private address" at save and test, and counts as a
+  send failure with the category "address refused" at send.
+
+## 2026-11-13 — [084] Supply chain and containers (build, part 1)
+
+Build PR of 084 on branch `ops/084-supply-chain-and-containers` — the
+image chain (issue #242; containers, audits and backup delete protection
+follow in the second PR).
+
+- **Signed in CI:** the tag workflow's `push-image` job signs the pushed
+  image with cosign (keyless, GitHub OIDC — `id-token: write`) and writes
+  tag and digest to the job summary.
+- **Deploy by digest:** `deploy/deploy.sh <tag>` resolves the tag with
+  `docker buildx imagetools inspect`, verifies the signature against this
+  repository's `image.yml` tag workflow, and only then backs up, pulls
+  and restarts — a moved tag or unsigned image stops before anything
+  changes. `.env` gains `SA_IMAGE` (`repo@sha256:…`), `SA_IMAGE_PREVIOUS`
+  for rollback and `SA_IMAGE_VERIFIED`; Compose runs `${SA_IMAGE}`.
+  `--unverified` works only with `--emergency` and marks the image
+  unverified. `provision.sh` installs cosign pinned to v3.1.4 with a
+  sha256 check.
+- **Pins:** `node`, `python` (both stages) and `caddy` are pinned by
+  digest, `uv` to `==0.13.7`, and Dependabot gets a `docker` ecosystem
+  entry covering the Dockerfile and compose files.
+- **Settings → Server** shows the Image row: the short digest and
+  "signature verified at deploy", or amber "not verified".
+
+## 2026-11-13 — [091] Number check: numbers inside fact strings (build)
+
+Build PR of 091 on branch `fix/091-number-check-fact-strings`.
+
+- **The bug:** on 12 Nov seven draft verdicts fell back to the plain
+  template with "number check failed" (detail `1.5`/`1.50`) — all
+  `shock_brake` blocks whose `change_text` reads "SPY fell past 1.50%
+  last hour". The verdict model quoted the threshold as "1.5%", a number
+  it was given, but the number check only accepted numeric JSON leaves
+  of `facts`; a number inside a string did not count.
+- **The rule:** a number inside code-written fact prose counts as a
+  fact the model was given. `_screen_content` now adds the numbers
+  `extract_numbers` finds in `facts.change_text` to the allowed set —
+  the gate or check detail code wrote for the verdict. `thesis` (the
+  decision model's own text) and date strings stay excluded.
+- Every other gate or code-check detail with numbers (spread, position
+  and sector caps, daily loss, earnings blackout, reward-to-risk math)
+  had the same latent trap; quoting any of them now passes the check.
+
+## 2026-11-12 — [081] Keys out of error text (build, part 2)
+
+Build PR of 081 on branch `fix/081-ask-settings-heartbeat` — the S3 and S9 parts (issues #240, #246).
+
+- **Ask sees trading settings only:** the `settings` tool serves an explicit allowlist (`execution`, `rules`, `regime`, `events`, `indicators`, `decision`, `selection`, `risk`, `schedule`, `universe`, `reviews`, `shadows`, `backtest`, `readiness`, `insights`, `performance`, `outcomes`); `universe` contributes mode and screen thresholds, never names. `ops`, `notifications`, `security`, `auth`, `logging`, `storage` and every other section are never served, and a `section` argument cannot bypass the list. Notification channels report `on`/`failing`/`off` — never hosts or addresses.
+- **Every tool result is scrubbed:** `run_tool` passes each result (strings at any depth) through the shared scrubber and the registered secret values before it can reach the model or be stored.
+- **The heartbeat URL is a write-only secret:** stored in `secrets` as `heartbeat_url`, saved and removed through `POST /api/server/heartbeat` ("Confirm it is you", the https-and-public check) and `…/heartbeat/remove`. `GET /api/server` returns only `host/••••` + last four, the last ping and configured; `GET /api/settings` and History never contain it (`ops` left the editable settings, every saved tree blanks it, and stored versions are blanked once at startup by `migrate_heartbeat`, flagged by a `heartbeat_secret_migration` event). A config `ops.heartbeat_url` is imported once, with a warning, then ignored.
+
+## 2026-11-12 — [078] Concurrent requests, part 1 (build)
+
+Build PR of 078 on branch `feat/078-concurrent-requests` (steps 1–4; sync jobs, shadows, storage and docs follow in the second PR).
+
+- **`concurrency.max_requests`** (20, 1–50): the most requests one batch keeps in flight; read at start, shown read-only in Settings → Server, and it sizes every Alpaca HTTP pool at `max(max_requests, 20)` per host.
+- **`app/concurrency.py`**: `run_batch` sends a set of independent requests together under a per-batch semaphore, returns results in item order (a value or the exception — one failure never cancels the others), records max in flight and wall time, and logs one INFO line per batch. A process-wide `SourceGate` per source sits in front of each rate limiter (the limiter itself is unchanged): live cycle requests go before waiting sync, shadow, review, Ask and backtest ones.
+- **The cycle's model calls run in two waves**: held positions' calls together, then candidates planned against the post-held state and called together; answers are still validated, stored and applied in order, orders stay sequential, and the call cap is unchanged. The account refresh and the 5-min bar refresh now run in parallel after reconciliation.
+
+## 2026-11-12 — [077] Universe UX and Data sync (build)
+
+Build PRs of 077: #265 (sync runs and API) and #269 (page and per-symbol status) on branches `feat/077-universe-ux` and `feat/077-universe-ux-ui`.
+
+- **`sync_runs` table**: one row per Universe data job (`daily_bars`, `screen`, `bars_5m`, `history`, `earnings`, `corporate_actions`, `fred`, `ecb`) with start/finish, status (`running`, `ok`, `partial`, `failed`), done/total and structured failures (what, plain-language error, next retry). Rows kept 30 days; progress writes throttled to one per second and always written by the job, never guessed.
+- **`GET /api/universe/sync`** lists every job's latest run with schedule and late flag; **`POST /api/universe/sync/{job}/retry`** re-runs a failed job in the background, refusing with 409 during a cycle or a duplicate run and 422 for unknown jobs or nothing to retry.
+- **Pool endpoint**: each row carries one status — `warming_up` with daily-bars and 5-min progress, `ready` with the next screen time, `eligible`, `eligible_fails`, `held`, `excluded` with the failed check and numbers — plus `detail`, `progress` and `failed_check`; counts gain `ready`; a sector summary reports pool, eligible and rank per sector.
+- **Universe page**: mode banner said once, tiles coloured only above zero, a Data sync card that is one quiet line when healthy and opens itself with the reason when a job fails, runs late or is in progress (history progress with ETA and the concurrency cap, Retry per failed job), "How the screen works" as a fold, Pool by sector filtering via `?sector=`, Status as the third table column, an inline sticky remove confirm, `name pending`, "after the first screen" hints and a fold row naming its filter and count.
+
+## 2026-11-12 — [076] Performance UX (build)
+
+Build PR of 076 on branch `feat/076-performance-ux`.
+
+- **Summary sentence** (`performance.summary.sentence`): one to three sentences from a fixed template over the same numbers as the tiles — sessions, closed trades and wins, adjusted P&L in $ and %, the account's return against SPY's, positions still open. No model.
+- **Tiles in words**: each of the six tiles gets a plain-words line under the value and keeps its definition on hover.
+- **Equity curve**: the response gains `exits` (date, symbol, R, won) and `drawdown` (peak date, low date, %). Exits are rings on the curve — green won, red lost — with "symbol · result" on hover; the deepest drawdown is shaded from peak to low. Both are in the legend.
+- **Labels, not codes**: exit reasons and actions read through the shared label map everywhere on the screen.
+- **Folding**: By regime lists only regimes with closed trades plus one "No closed trades yet in: …" line; a regime that blocks entries (down · high vol) says so. While every after-exit row is pending the table is one line — "n trades are inside their 5-session window; the first result arrives <date>", the date the earliest exit plus five trading sessions from the calendar; once some are done, pending rows group at the bottom. Decisions waiting on prices say "waiting · first prices <date>".
+- **Closed trades**: newest first, 20 rows then "Show all n"; symbol and exit-reason filters kept in the URL; the R column gets a bar from −1R to the trade's R, capped at 2R wide.
+- **One banner**: below `performance.tail.min_trades` (20) closed trades the page shows a single small-sample banner under the summary; the Winners and tails card drops its own.
+- **Phone**: "On this page" chips; chart date labels stay non-overlapping.
+
+## 2026-11-12 — [088] Code coverage report from CI (build, part 2)
+
+Second build PR of 088 on branch `ops/088-code-coverage-e2e` (steps 7–10 of the kickoff).
+
+- **Backend e2e coverage:** with `E2E_COVERAGE=1` the Playwright web server runs `coverage run --parallel-mode` (`sigterm` and `concurrency = ["thread"]` in `pyproject.toml`); Playwright's `gracefulShutdown` SIGTERM flushes `backend/.coverage.e2e.<project>.*` files. Without the variable the command line is unchanged.
+- **Frontend e2e coverage:** the shared `e2e/shots.ts` fixture wraps `context.newPage`, starts Chromium V8 coverage per page and collects on page close into `coverage-e2e/raw/*.jsonl`; `vite.config.ts` emits sourcemaps only under `E2E_COVERAGE=1`; `scripts/coverage-e2e.mjs` resolves served assets + sourcemaps and writes istanbul reports via `monocart-coverage-reports`.
+- **`coverage` job:** downloads the unit and e2e artifacts, combines backend data (`coverage combine`/`xml`/`html` for unit/e2e/all) and merges frontend istanbul maps (`scripts/coverage-merge.mjs`, unit/e2e/all, skipping `all` when statement maps differ), prints one summary and uploads `coverage-all` for 7 days.
+- **`scripts/coverage_summary.py`** now takes `--{backend,frontend}-{unit,e2e,all}` and prints Unit/E2E/All columns, package rows on All, the least-covered list and the e2e-only list (0% unit, >0% e2e, ≥50 statements).
+- **Deps:** `monocart-coverage-reports` (frontend dev), `defusedxml` (Python dev, for the summary script's XML parsing).
+
+## 2026-11-12 — [088] Code coverage report from CI (build, part 1)
+
+First build PR of 088 on branch `feat/088-code-coverage` (steps 1–6 of the kickoff; the e2e measurement follows in a second PR).
+
+- **Backend:** `pytest-cov` in the dev extra; `[tool.coverage.run]`/`[tool.coverage.report]` in `pyproject.toml` (branch coverage, `source = ["app"]`, `relative_files`). Only CI passes `--cov` options, so `make test-backend` locally measures nothing.
+- **Frontend:** `@vitest/coverage-v8` (same major as vitest); `test.coverage` in `vite.config.ts` (v8 provider, off unless `--coverage`); `make test-frontend VITEST_ARGS=--coverage` in CI.
+- **`scripts/coverage_summary.py`**: standard-library script that prints the Markdown table (lines and branches per side, backend per-package rows, 10 least-covered files with ≥50 statements) into `$GITHUB_STEP_SUMMARY` with `if: always()`; a missing report prints "no report" and never fails the step. Unit test: `backend/tests/test_coverage_summary.py`.
+- **Artifacts** `coverage-backend` (`backend/htmlcov/`, `backend/coverage.xml`) and `coverage-frontend` (`frontend/coverage/`), 7 days.
+- **Docs:** `AGENTS.md` → Commands (one-module coverage locally; a full coverage run joins the never-run-locally list), README gains a "Tests and coverage" section.
+
+## 2026-11-12 — [079] Review stories (build)
+
+Build PR of 079 on branch `feat/079-review-stories`.
+
+- **`backend/config.example.yaml` (spec-owned):** `reviews.prompts` defaults move to `weekly.v3` and `briefing.v3` (verdict stays `verdict.v2`); `reviews.max_words` gains `weekly_story: 350` and `briefing: 220` — `weekly_summary: 120` stays for the v1/v2 prompts, whose checks keep their own limits.
+
+## 2026-11-12 — [081] Keys out of error text (build, part 1)
+
+Build PR of 081 on branch `fix/081-keys-out-of-error-text` — the S1 part (issue #238); Ask settings and the heartbeat URL follow in the second PR.
+
+- **`safe_error`** (`app/errors.py`): exception-derived text loses every URL query string, gets the log scrubber's key patterns and all registered secret values (plus `extra`), and is cut to 300 characters. Every `DataResult(error=…)`, broker error, LLM error, API `detail=` built from an exception, notification, event detail, ops status and Ask error now goes through it; an AST test fails on any `str(exc)`/`{exc}`/`repr(exc)` outside logging and scrub calls.
+- **Second line:** `NotificationService.notify` scrubs line, body and details before the row is stored or emailed; `record_event` scrubs details at any depth.
+- **Stored rows, once:** at startup, after migrations and secret providers, `app/stored_scrub.py` rewrites `cycles.data_source_health`, `notifications.subject`/`body`, `events.details` and the Ask message columns in batches of 500, guarded by a `stored_text_scrub` event row. When rows changed, Needs you shows "A key appeared in stored error text. Replace the FRED and Finnhub keys" (order 2; leaves when both keys were replaced after the scrub, or on dismiss with a note).
+
+## 2026-11-12 — [089] A PR closes only issues it resolves (process)
+
+Marc asked on 12 Nov that every issue a PR closes on merge is really resolved. No behaviour change.
+
+- **`AGENTS.md` → How to work:** before a PR is ready, read every issue it would close, check each point against the PR, and list them under "Issues closed". An open point means `Part of #n` and a comment on the issue, not `Closes`. Closing keywords only where meant; after the merge the issue must show as closed.
+- **`CLAUDE.md`:** the same for Claude's own PRs; in reviews an issue that would close with an open point is a blocking finding.
+- **PR template:** new section "Issues closed".
+
+## 2026-11-12 — [088] Code coverage report from CI (process)
+
+Marc asked on 12 Nov how to generate a code coverage report. There was none. No behaviour change and no spec section.
+
+- **Kickoff `088-ops-code-coverage.md`** (issue #259): CI measures the backend (pytest, lines and branches) and the frontend (Vitest) on every pull request, shows the totals and the 10 least covered files in a job summary, and keeps the HTML reports as artifacts for 7 days.
+- **Playwright e2e runs are measured too** (Marc, 12 Nov): the backend under `coverage run`, the frontend with Chromium's V8 coverage and source maps, both only when CI sets `E2E_COVERAGE=1`. One `coverage` job shows Unit, E2E and All per side.
+- **Report only:** no minimum that fails CI (Marc: maybe later). Slow and perf runs are not measured.
+- **Laptop:** never a full coverage run (item 087); one module at a time is allowed.
+
+## 2026-11-12 — [074] LLM inspector UX (build)
+
+Build PR of 074 on branch `feat/074-inspector-ux`.
+
+- **Reasons dictionary** (`app/llm/reasons.py`): every warning/error reason carries a title, what it means, the likely cause, what to do, and links where relevant.
+- **Explanations** (`app/inspector/explain.py`): `GET /api/llm-calls/{id}` returns one "What happened" entry per reason — what it means, why it happened here, what to do — plus `model_action` for the "model answered X → code made it Y" line.
+- **Attention** (`app/inspector/attention.py`): `llm_calls.attention` (`none` | `watch` | `act`) is computed once at write time from history only and never recomputed; the spec's act/watch rules are implemented. `act` calls surface as Needs-you items on the dashboard.
+- **Summary**: `attention` counts, `top_reasons` (count, fix, attention, filter) and per-cycle buckets for single-session ranges; the `attention` filter joins the shared filters; list/detail rows carry `attention`.
+- **Frontend**: attention chips, What-happened panels, Top reasons, folded repeats in the list, structured input sections and answer rows with Raw JSON/Copy kept, ↑ Newer / ↓ Older with K/J and arrow keys.
 
 ## 2026-11-12 — [087] Tests run in CI, not on the laptop (process)
 

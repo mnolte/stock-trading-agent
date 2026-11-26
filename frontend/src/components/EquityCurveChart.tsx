@@ -1,20 +1,47 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LineSeries, LineStyle, createChart } from 'lightweight-charts';
-import type { IChartApi } from 'lightweight-charts';
 import type { Time } from 'lightweight-charts';
 import { fmtDayMonthIn } from '../format';
 
 export interface EquityCurvePoint {
   /** Session date in New York, YYYY-MM-DD. */
   date: string;
+  /** Adjusted equity — the drawn agent line (item 108). */
   equity: number;
+  /** Raw paper equity for the hover, when it differs. */
+  raw?: number | null;
   benchmark: number | null;
+}
+
+/** Item 076: one agent trade's exit, a ring on the curve. */
+export interface CurveExit {
+  date: string;
+  symbol: string;
+  r: string | null;
+  won: boolean;
+}
+
+/** Item 076: the deepest drawdown's peak → low span, shaded on the curve. */
+export interface CurveDrawdown {
+  peak_date: string;
+  low_date: string;
+  pct: string;
+}
+
+interface ExitMark {
+  key: string;
+  x: number;
+  y: number;
+  title: string;
+  won: boolean;
 }
 
 const AGENT = '#F2B94B'; // --sa-chart-vwap (agent accent)
 const BENCH = '#98A2AF'; // --sa-text-muted
 const GRID = '#1C222C'; // --sa-subtle
 const TEXT = '#98A2AF';
+const UP = '#3DD68C';
+const DOWN = '#FF6369';
 
 function businessDay(time: Time): string {
   if (typeof time === 'string') return time;
@@ -25,18 +52,40 @@ function businessDay(time: Time): string {
   return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
 }
 
+function signedR(r: string | null): string {
+  if (r == null) return '';
+  const n = Number(r);
+  if (n > 0) return `+${n.toFixed(2)}R`;
+  if (n < 0) return `−${Math.abs(n).toFixed(2)}R`;
+  return `${n.toFixed(2)}R`;
+}
+
 /** Equity vs buy-and-hold benchmark, one point per session (design:
  * Performance). Daily data, so the x axis uses session dates — weekends and
- * holidays simply do not appear. */
+ * holidays simply do not appear. Item 076: trade exits are rings on the
+ * curve and the deepest drawdown is shaded peak → low. */
 export function EquityCurveChart({
   points,
   currency,
+  exits,
+  drawdown,
 }: {
   points: EquityCurvePoint[];
   currency: 'USD' | 'EUR';
+  exits?: CurveExit[];
+  drawdown?: CurveDrawdown | null;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
+  const [marks, setMarks] = useState<ExitMark[]>([]);
+  const [band, setBand] = useState<{ left: number; width: number; bottom: number } | null>(null);
+  const [hover, setHover] = useState<{
+    x: number;
+    y: number;
+    date: string;
+    equity: number;
+    raw: number | null;
+    benchmark: number | null;
+  } | null>(null);
 
   useEffect(() => {
     const el = host.current;
@@ -69,7 +118,6 @@ export function EquityCurveChart({
           `${currency === 'EUR' ? '€' : '$'}${price.toLocaleString('en-US', { maximumFractionDigits: 0 })}`,
       },
     });
-    chartRef.current = chart;
 
     const bench = chart.addSeries(LineSeries, {
       color: BENCH,
@@ -96,21 +144,173 @@ export function EquityCurveChart({
     });
     equity.setData(points.map((p) => ({ time: p.date, value: p.equity })));
 
-    // autoSize lays the canvas out asynchronously; fit after the first frame
-    // so the series actually spans the width.
-    const raf = requestAnimationFrame(() => chart.timeScale().fitContent());
+    // Item 108: hovering a point shows the adjusted equity on the line
+    // and the raw paper equity underneath.
+    const onCrosshair = (param: {
+      point?: { x?: number; y?: number };
+      time?: unknown;
+    }) => {
+      const x = param.point?.x;
+      const t = param.time;
+      if (x == null || t == null) {
+        setHover(null);
+        return;
+      }
+      const day = businessDay(t as Time);
+      const p = points.find((q) => q.date === day);
+      if (!p) {
+        setHover(null);
+        return;
+      }
+      setHover({
+        x,
+        y: param.point?.y ?? 0,
+        date: day,
+        equity: p.equity,
+        raw: p.raw ?? null,
+        benchmark: p.benchmark,
+      });
+    };
+    chart.subscribeCrosshairMove(onCrosshair);
+
+    const place = () => {
+      const ts = chart.timeScale();
+      const byDate = new Map(points.map((p) => [p.date, p]));
+      const nextMarks: ExitMark[] = [];
+      for (const e of exits ?? []) {
+        const p = byDate.get(e.date);
+        if (!p) continue;
+        const x = ts.timeToCoordinate(p.date as Time);
+        const y = equity.priceToCoordinate(p.equity);
+        if (x == null || y == null) continue;
+        const r = signedR(e.r);
+        nextMarks.push({
+          key: `${e.date}-${e.symbol}`,
+          x,
+          y,
+          won: e.won,
+          title: `${e.symbol} · ${r || (e.won ? 'won' : 'lost')}`,
+        });
+      }
+      setMarks(nextMarks);
+
+      let nextBand: { left: number; width: number; bottom: number } | null = null;
+      if (drawdown && Number(drawdown.pct) > 0) {
+        const x1 = ts.timeToCoordinate(drawdown.peak_date as Time);
+        const x2 = ts.timeToCoordinate(drawdown.low_date as Time);
+        if (x1 != null && x2 != null && x1 !== x2) {
+          const axisH = ts.height();
+          nextBand = {
+            left: Math.min(x1, x2),
+            width: Math.abs(x2 - x1),
+            bottom: Number.isFinite(axisH) ? axisH : 28,
+          };
+        }
+      }
+      setBand(nextBand);
+    };
+
+    // autoSize lays the canvas out asynchronously; fit after the first
+    // frame so the series actually spans the width, then place overlays.
+    const raf = requestAnimationFrame(() => {
+      chart.timeScale().fitContent();
+      place();
+    });
+    chart.timeScale().subscribeVisibleLogicalRangeChange(place);
     return () => {
       cancelAnimationFrame(raf);
+      chart.unsubscribeCrosshairMove(onCrosshair);
       chart.remove();
-      chartRef.current = null;
     };
-  }, [points, currency]);
+  }, [points, currency, exits, drawdown]);
+
+  const ddLabel =
+    drawdown && Number(drawdown.pct) > 0
+      ? `Deepest drawdown ${Number(drawdown.pct).toFixed(2)}%: ${fmtDayMonthIn(drawdown.peak_date)} to ${fmtDayMonthIn(drawdown.low_date)}`
+      : null;
 
   return (
-    <div
-      ref={host}
-      data-testid="equity-chart"
-      style={{ width: '100%', height: '300px' }}
-    />
+    <div style={{ position: 'relative', width: '100%' }}>
+      <div
+        ref={host}
+        data-testid="equity-chart"
+        style={{ width: '100%', height: '300px' }}
+      />
+      <div aria-hidden="true" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+        {band && (
+          <div
+            title={ddLabel ?? undefined}
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: band.bottom,
+              left: band.left,
+              width: band.width,
+              background: 'rgba(255,99,105,0.08)',
+              borderLeft: '1px dashed rgba(255,99,105,0.4)',
+              borderRight: '1px dashed rgba(255,99,105,0.4)',
+              pointerEvents: 'auto',
+            }}
+          />
+        )}
+        {marks.map((m) => (
+          <div
+            key={m.key}
+            title={m.title}
+            style={{
+              position: 'absolute',
+              left: m.x - 7,
+              top: m.y - 7,
+              width: 14,
+              height: 14,
+              borderRadius: '50%',
+              boxSizing: 'border-box',
+              border: `2px solid ${m.won ? UP : DOWN}`,
+              background: 'transparent',
+              pointerEvents: 'auto',
+            }}
+          />
+        ))}
+        {hover && (
+          <div
+            data-testid="equity-hover"
+            style={{
+              position: 'absolute',
+              left: Math.min(hover.x + 12, 480),
+              top: Math.max(hover.y - 64, 4),
+              padding: '6px 8px',
+              background: 'var(--sa-surface, #161B22)',
+              border: '1px solid var(--sa-border, #2A323D)',
+              borderRadius: 6,
+              fontSize: 11,
+              color: TEXT,
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <div>{fmtDayMonthIn(hover.date)}</div>
+            <div>
+              Adjusted{' '}
+              <span style={{ color: 'var(--sa-text-1, #E6EAF0)' }}>
+                {`${currency === 'EUR' ? '€' : '$'}${hover.equity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              </span>
+            </div>
+            {hover.raw !== null && hover.raw !== hover.equity && (
+              <div>
+                Raw{' '}
+                <span style={{ color: 'var(--sa-text-2, #B6BFC9)' }}>
+                  {`${currency === 'EUR' ? '€' : '$'}${hover.raw.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                </span>
+              </div>
+            )}
+            {hover.benchmark !== null && (
+              <div>
+                {`Benchmark ${`${currency === 'EUR' ? '€' : '$'}${hover.benchmark.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}`}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

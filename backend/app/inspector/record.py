@@ -79,8 +79,11 @@ def build_llm_call(
     prompt_hash: str | None = None,
     cost: Decimal | None = None,
     cost_source: str | None = None,
+    cache_saved: Decimal | None = None,
     slow_ms: int | None = None,
     scrub_values: ScrubValues | None = None,
+    batch_id: str | None = None,
+    batch_size: int | None = None,
 ) -> LlmCall:
     """One call-history row for a completed request.
 
@@ -122,6 +125,9 @@ def build_llm_call(
         prompt_hash=prompt_hash,
         tokens_in=response.tokens_in,
         tokens_out=response.tokens_out,
+        tokens_cached_in=response.cached_tokens_in,
+        tokens_cache_write_in=response.cache_write_tokens_in,
+        cache_saved=cache_saved,
         cost=cost,
         cost_source=cost_source or "priced",
         latency_ms=response.latency_ms,
@@ -140,6 +146,8 @@ def build_llm_call(
         raw_response=response.raw if response.error is None else None,
         backfilled=False,
         sent_input=sent_input,
+        batch_id=batch_id,
+        batch_size=batch_size,
     )
 
 

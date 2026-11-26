@@ -146,6 +146,12 @@ class Cycle(Base):
     # in New York time; null when nothing is scheduled or the calendar is
     # missing (a missing calendar never blocks a cycle).
     next_release: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    # Concurrent requests (item 078): model_seconds is the time from the
+    # cycle's first model call sent to the last answer; max_in_flight
+    # the most requests in flight at once during the cycle. Null on
+    # cycles with no model calls and on rows written before item 078.
+    model_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    max_in_flight: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class Decision(Base):
@@ -370,13 +376,15 @@ class Earning(Base):
 
 
 class CorporateAction(Base):
-    """Split or dividend."""
+    """Split, cash dividend or stock dividend."""
 
     __tablename__ = "corporate_actions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
-    action_type: Mapped[str] = mapped_column(String(16), nullable=False)  # split | dividend
+    action_type: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # split | dividend | stock_dividend
     date: Mapped[datetime] = mapped_column(nullable=False)
     ratio_or_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
 
@@ -470,6 +478,34 @@ class UniverseScreenRow(Base):
     return_vs_spy: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     rank: Mapped[int | None] = mapped_column(nullable=True)
     failed_in_a_row: Mapped[int] = mapped_column(nullable=False, default=0)
+
+
+class SyncRunRow(Base):
+    """One run of a Universe → Data sync job (item 077, docs/SPEC.md).
+
+    Written by the job itself — start, throttled progress (at most one
+    update a second), per-symbol/source failures and the end state —
+    never guessed by the GUI. ``failures`` is a list of
+    ``{"what", "error", "next_retry"}`` where ``what`` is a symbol or a
+    source name and ``error`` plain words. Rows older than 30 days are
+    pruned by the writer.
+    """
+
+    __tablename__ = "sync_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # daily_bars | screen | bars_5m | history | earnings |
+    # corporate_actions | fred | ecb
+    job: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(nullable=False, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # running | ok | partial | failed
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    done: Mapped[int] = mapped_column(nullable=False, default=0)
+    total: Mapped[int | None] = mapped_column(nullable=True)
+    failures: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONOrNull, nullable=True
+    )
 
 
 class SettingsVersion(Base):
@@ -668,6 +704,9 @@ class LlmCall(Base):
         Index("ix_llm_calls_strategy", "strategy_id"),
         Index("ix_llm_calls_latency", "latency_ms"),
         Index("ix_llm_calls_reasons", "reasons"),
+        # Top reasons / attention counts group by all three (item 074);
+        # the composite keeps that an index-only scan on the 100k fixture.
+        Index("ix_llm_calls_reasons_meta", "reasons", "attention", "kind"),
         Index(
             "ix_llm_calls_dims",
             "outcome", "source", "symbol", "final_action",
@@ -708,6 +747,12 @@ class LlmCall(Base):
     prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tokens_in: Mapped[int | None] = mapped_column(nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(nullable=True)
+    # Item 109: the prompt-cache split and what it saved at this call's
+    # prices. NULL on rows written before the columns existed — they
+    # count as uncached, never rewritten.
+    tokens_cached_in: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_cache_write_in: Mapped[int | None] = mapped_column(nullable=True)
+    cache_saved: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
     latency_ms: Mapped[int | None] = mapped_column(nullable=True)
@@ -730,6 +775,16 @@ class LlmCall(Base):
         String(64), nullable=True
     )
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Item 074: none | watch | act — set once at write time by
+    # app.inspector.attention, never recomputed (docs/SPEC.md → Does it
+    # need me?). Existing rows backfill to "none".
+    attention: Mapped[str] = mapped_column(
+        String(8),
+        nullable=False,
+        default="none",
+        server_default="none",
+        index=True,
+    )
     backfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # The input snapshot exactly as sent to the model — the stripped
     # send copy for v3/v4 decision calls, null on rows written before
@@ -742,6 +797,10 @@ class LlmCall(Base):
     ask_message_id: Mapped[int | None] = mapped_column(
         ForeignKey("ask_messages.id"), nullable=True
     )
+    # Item 078: which concurrent batch the call was sent in and how big
+    # it was; null on unbatched calls and rows written before item 078.
+    batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    batch_size: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class AskThread(Base):
@@ -1257,6 +1316,34 @@ class AuthSession(Base):
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
     keep_signed_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     confirmed_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    # The trusted device this session was opened through (item 083);
+    # revoking the device closes the session's sockets.
+    trusted_device_id: Mapped[int | None] = mapped_column(
+        ForeignKey("trusted_devices.id"), nullable=True
+    )
+
+
+class TrustedDevice(Base):
+    """A browser that completed sign-in before (item 083, S6).
+
+    The ``__Host-sa_device`` cookie carries a random token; only its
+    SHA-256 is stored. A valid one lifts only the global sign-in pause —
+    the password, the code and the per-address lockout still apply.
+    ``failures`` is a JSON list of naive-UTC ISO times of failed sign-in
+    steps made with this device; ``auth.lockout_failures`` inside
+    ``auth.lockout_window_minutes`` revokes the row.
+    """
+
+    __tablename__ = "trusted_devices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+    device_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    last_used_at: Mapped[datetime] = mapped_column(nullable=False)
+    failures: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
 
 class SignInAttempt(Base):

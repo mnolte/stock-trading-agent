@@ -113,7 +113,9 @@ class VixService:
             return self.latest
         stored = self._store(result.data)
         try:
-            await self.market_data.refresh_daily(today, symbols=[self.etf])
+            await self.market_data.refresh_daily(
+                today, self.clock.now(), symbols=[self.etf]
+            )
         except Exception:  # noqa: BLE001 - ETF bars are best-effort here
             logger.exception("vixy daily refresh failed")
         self.latest = DataResult(data=stored, source=result.source)

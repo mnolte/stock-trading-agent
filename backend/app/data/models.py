@@ -192,10 +192,10 @@ class EarningsEvent:
 
 @dataclass(frozen=True)
 class CorporateActionEvent:
-    """One split or dividend corporate action."""
+    """One split, cash dividend or stock dividend corporate action."""
 
     symbol: str
-    action_type: str  # split | dividend
+    action_type: str  # split | dividend | stock_dividend
     ex_date: date
     amount_or_ratio: Decimal | None
     fetched_at: datetime

@@ -107,6 +107,19 @@ updates:
       - dependency-name: "eslint-plugin-react-refresh"
         versions: [">=0.5"]
 
+  # Docker — base images in the Dockerfile and the pinned images in the
+  # compose files (item 084). One entry covers both.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Amsterdam"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
   # GitHub Actions — action versions in .github/workflows/*.yml.
   # No `groups` or `cooldown` here: action updates are few and each is
   # typically a single-line pin bump, so batching adds little.

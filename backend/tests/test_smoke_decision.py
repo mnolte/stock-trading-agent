@@ -79,7 +79,7 @@ async def test_smoke_decision_prints_call_details_and_stores_nothing(
         _fakes(), WeekdayCalendarProvider(), config, session_factory=session_factory
     )
     await market_data.refresh_bars(NOW - timedelta(days=90), NOW)
-    await market_data.refresh_daily(date(2026, 10, 15))
+    await market_data.refresh_daily(date(2026, 10, 15), clock.now())
 
     lines: list[str] = []
     client = CountingFake()
@@ -114,7 +114,7 @@ async def test_smoke_decision_failed_call_exits_nonzero(
         _fakes(), WeekdayCalendarProvider(), config, session_factory=session_factory
     )
     await market_data.refresh_bars(NOW - timedelta(days=90), NOW)
-    await market_data.refresh_daily(date(2026, 10, 15))
+    await market_data.refresh_daily(date(2026, 10, 15), clock.now())
 
     lines: list[str] = []
     client = FakeDecisionClient(responses={"MSFT": {"error": "timeout after 30s"}})

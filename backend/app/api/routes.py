@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, overload
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -48,6 +48,7 @@ from app.decide.v3 import scheduled_exit_text
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance, compute_tails_payload
+from app.errors import safe_error
 from app.llm.models import REVIEW_TASKS, review_model
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import (
@@ -77,13 +78,16 @@ from app.secrets_service import (
     MISSING_KEY,
     SECRET_TOO_SHORT,
     KeyTesters,
+    SecretError,
     SecretsStore,
     scrub,
 )
 from app.settings_service import (
+    DIRECTIONS,
     SettingsError,
     _deep_merge,
     _nested_get,
+    confirm_fields,
     pending_change_map,
     save_version,
     schedule_table,
@@ -92,6 +96,13 @@ from app.settings_service import (
 )
 from app.signals.indicators import ema_series
 from app.signals.service import SignalService
+from app.syncs import (
+    SYNC_JOBS,
+    SyncRuns,
+    tracked_fetch,
+    tracked_fetches,
+    tracked_symbols,
+)
 from app.universe.service import PoolError, UniverseService
 
 router = APIRouter()
@@ -1165,7 +1176,7 @@ async def pause_resume(request: Request) -> dict[str, object]:
     try:
         await executor.resume_from_pause()
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=safe_error(exc)) from exc
     return {"paused": False}
 
 
@@ -1189,7 +1200,7 @@ async def kill_switch_resume(
     try:
         await executor.resume(reason)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=safe_error(exc)) from exc
     return {"kill_switch": False}
 
 
@@ -1230,7 +1241,7 @@ def dismiss_event(
             session.commit()
             dismissed_id = event.id
         except ReadinessError as exc:
-            detail = str(exc)
+            detail = safe_error(exc)
             if detail == "a note is required to dismiss an error":
                 raise HTTPException(status_code=422, detail=detail) from exc
             raise HTTPException(status_code=409, detail=detail) from exc
@@ -1245,7 +1256,10 @@ def readiness(request: Request) -> dict[str, object]:
 
     with get_session_maker()() as session:
         return payload(
-            session, config=get_config(), clock=_clock(request)
+            session,
+            config=get_config(),
+            clock=_clock(request),
+            calendar=_calendar(request),
         )
 
 
@@ -1271,7 +1285,7 @@ def readiness_manual(
             session.commit()
             row_id = row.id
         except ReadinessError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(status_code=422, detail=safe_error(exc)) from exc
     _notify(request, "readiness")
     return {"saved": True, "id": row_id}
 
@@ -2894,6 +2908,20 @@ def _held_symbols() -> set[str]:
     return held | pending
 
 
+@overload
+def _without_heartbeat(tree: dict[str, Any]) -> dict[str, Any]: ...
+@overload
+def _without_heartbeat(tree: None) -> None: ...
+def _without_heartbeat(tree: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Blank ``ops.heartbeat_url`` — a secret, never shown or diffed (081)."""
+    if not isinstance(tree, dict):
+        return tree
+    ops = tree.get("ops")
+    if not isinstance(ops, dict) or "heartbeat_url" not in ops:
+        return tree
+    return {**tree, "ops": {**ops, "heartbeat_url": ""}}
+
+
 def _settings_form(config: object) -> dict[str, object]:
     """Current effective values in the shape the settings form expects."""
     from app.reviews.service import _LATEST_PROMPT
@@ -2924,6 +2952,9 @@ def _settings_form(config: object) -> dict[str, object]:
         },
         "gui": {
             "near_stop_atr": get("gui", "near_stop_atr", default=1.5),
+            "log_watch_min_count": get(
+                "gui", "log_watch_min_count", default=5
+            ),
         },
         "inspector": {
             "slow_call_seconds": get(
@@ -2958,6 +2989,12 @@ def _settings_form(config: object) -> dict[str, object]:
             "min_reward_risk": get("decision", "min_reward_risk", default=1.5),
             "max_calls_per_cycle": get(
                 "decision", "max_calls_per_cycle", default=10
+            ),
+            "call_timeout_seconds": get(
+                "decision", "call_timeout_seconds", default=30
+            ),
+            "max_output_tokens": get(
+                "decision", "max_output_tokens", default=2048
             ),
             "entry_gate": get("decision", "entry_gate", default="floor"),
             "min_ev_r": get("decision", "min_ev_r", default=0.25),
@@ -3022,6 +3059,9 @@ def _settings_form(config: object) -> dict[str, object]:
         },
         "schedule": {
             "cycles": get("schedule", "cycles", default=[]),
+            "last_cycle_no_entries": get(
+                "schedule", "last_cycle_no_entries", default=False
+            ),
         },
         "events": {
             # Only the editable FOMC sub-keys — dates, times and FRED
@@ -3112,6 +3152,18 @@ def _settings_form(config: object) -> dict[str, object]:
                 )
                 for task in REVIEW_TASKS
             },
+            "temperature": get("reviews", "temperature", default=0.2),
+            "max_words": {
+                "weekly_summary": get(
+                    "reviews", "max_words", "weekly_summary", default=120
+                ),
+                "weekly_story": get(
+                    "reviews", "max_words", "weekly_story", default=350
+                ),
+                "briefing": get(
+                    "reviews", "max_words", "briefing", default=220
+                ),
+            },
         },
         "ask": {
             "enabled": get("ask", "enabled", default=True),
@@ -3124,6 +3176,31 @@ def _settings_form(config: object) -> dict[str, object]:
             ),
             "keep_days": get("ask", "keep_days", default=90),
             "instructions": get("ask", "instructions", default=""),
+            "max_context_tokens": get(
+                "ask", "max_context_tokens", default=60000
+            ),
+            "max_tool_rounds": get("ask", "max_tool_rounds", default=8),
+            "max_tool_result_tokens": get(
+                "ask", "max_tool_result_tokens", default=6000
+            ),
+            "answer_timeout_seconds": get(
+                "ask", "answer_timeout_seconds", default=90
+            ),
+            "max_questions_per_minute": get(
+                "ask", "max_questions_per_minute", default=10
+            ),
+            "max_notes": get("ask", "max_notes", default=100),
+            "max_output_tokens": get("ask", "max_output_tokens", default=4096),
+        },
+        "shadows": {
+            "monthly_cost_cap_usd": get(
+                "shadows", "monthly_cost_cap_usd", default=5
+            ),
+        },
+        "backtest": {
+            "monthly_cost_cap_usd": get(
+                "backtest", "monthly_cost_cap_usd", default=20
+            ),
         },
         "universe": {
             "mode": get("universe", "mode", default="fixed"),
@@ -3362,6 +3439,25 @@ def _reviews_spend(request: Request) -> str | None:
         return str(service.monthly_spend(session))
 
 
+def _shadows_spend(request: Request) -> str | None:
+    """This month's LLM-shadow spend for the cost-cap row (None without
+    a shadow runner — e.g. a bare test app)."""
+    runner = getattr(request.app.state, "shadow_runner", None)
+    if runner is None:
+        return None
+    with get_session_maker()() as session:
+        return str(runner.monthly_spend(session))
+
+
+def _backtest_spend(request: Request) -> str | None:
+    """This month's backtest spend for the cost-cap row — the same
+    ``spent_this_month`` the cap itself is checked against (item 109)."""
+    from app.backtests.estimate import spent_this_month
+
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    return str(spent_this_month(get_session_maker(), clock.now().astimezone(UTC).date()))
+
+
 def _flatten_overrides(
     node: dict[str, Any], prefix: tuple[str, ...] = ()
 ) -> list[tuple[str, Any]]:
@@ -3420,8 +3516,8 @@ def settings(request: Request) -> dict[str, object]:
                 "reason": row.reason,
             }
         )
-    pending_tree = config.pending()
-    active_tree = config.effective()
+    pending_tree = _without_heartbeat(config.pending())
+    active_tree = _without_heartbeat(config.effective())
     return {
         "settings": _settings_form(config),
         "strategy_overrides": _strategy_overrides(config),
@@ -3442,7 +3538,11 @@ def settings(request: Request) -> dict[str, object]:
         "schedule": schedule_table(config, clock, _calendar(request)),
         "connections": _connections(request),
         "history": history,
+        "saved_without_control": config.saved_without_control,
+        "entry_cutoff": config.get("execution", "entry_cutoff"),
         "reviews_spend_usd": _reviews_spend(request),
+        "shadows_spend_usd": _shadows_spend(request),
+        "backtest_spend_usd": _backtest_spend(request),
         "notification_events": [
             {
                 "key": d.key,
@@ -3459,7 +3559,17 @@ def settings(request: Request) -> dict[str, object]:
             else None
         ),
         "config_layers": config.layer_counts(),
+        # Item 078: read at start, shown read-only — a change needs a
+        # restart (it also sizes the HTTP pools).
+        "concurrency": {
+            "max_requests": config.get_int(
+                "concurrency", "max_requests", default=20
+            )
+        },
         "mode": config.env.mode,
+        # Item 082: the backend's looser/tighter map — the GUI's tags
+        # and its own copy of the map are gone; this is the one map.
+        "directions": dict(DIRECTIONS),
         # Item 067: the release calendar's read-only display — FOMC date
         # count/next/last, tracked 08:30 releases and the next release.
         "economic_releases": (
@@ -3469,6 +3579,95 @@ def settings(request: Request) -> dict[str, object]:
             else None
         ),
     }
+
+
+@router.get("/settings/models")
+def settings_models(request: Request) -> dict[str, object]:
+    """The read-only model catalog (item 109, docs/SPEC.md → Model
+    providers): every field of the ``models`` block — prices included —
+    plus who uses each model and whether its provider key passes.
+    Config-only by design: there is no write route."""
+    from app.llm.models import (
+        model_provider,
+        model_timeout_seconds,
+        models_table,
+        named_models,
+    )
+
+    config = get_config()
+    store = _secrets(request)
+    simulated = config.env.mode == "simulated"
+    table = models_table(config)
+    with get_session_maker()() as session:
+        used: dict[str, list[str]] = {}
+        for what, model in named_models(config, session):
+            used.setdefault(model, []).append(what)
+    out = []
+    for model_id, entry in table.items():
+        provider = model_provider(config, model_id)
+        out.append(
+            {
+                "id": model_id,
+                "provider": provider,
+                "input": entry.get("input"),
+                "cached_input": entry.get("cached_input"),
+                "cache_write": entry.get("cache_write"),
+                "output": entry.get("output"),
+                "cutoff": entry.get("cutoff"),
+                "effort": entry.get("effort"),
+                "supports_temperature": entry.get("supports_temperature"),
+                "api": entry.get("api"),
+                "timeout_seconds": model_timeout_seconds(config, model_id),
+                "key_ok": simulated
+                or (store is not None and store.provider_ok(provider)),
+                "used_by": used.get(model_id, []),
+            }
+        )
+    return {"models": out}
+
+
+@router.post("/settings/use-config")
+async def use_config_setting(request: Request, body: dict[str, object]) -> dict[str, object]:
+    from app.settings_service import (
+        _confirm_entry,
+        _direction_for,
+        refresh_saved_without_control,
+    )
+
+    config = get_config()
+    reason = body.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise HTTPException(status_code=422, detail=["a reason is required"])
+    with get_session_maker()() as session:
+        refresh_saved_without_control(config, session)
+    item = next(
+        (row for row in config.saved_without_control if row["key"] == body.get("key")),
+        None,
+    )
+    if item is None:
+        raise HTTPException(status_code=422, detail="key is not a saved value without a control")
+    key = item["key"]
+    if item["direction"] == "looser" or _direction_for(key) is None:
+        from app.auth.api import require_confirmed
+
+        require_confirmed(request, fields=[_confirm_entry(key, item["saved"], item["config"])])
+    base = config.pending() or config.effective()
+    new_tree = _without_heartbeat(_deep_merge(base, {}))
+    node = new_tree
+    parts = key.split(".")
+    for part in parts[:-1]:
+        node = node[part]
+    node[parts[-1]] = item["config"]
+    result = _store_settings(
+        request,
+        new_tree,
+        reason,
+        [version_change_summary(base, new_tree)],
+        cleaned={parts[0]: new_tree[parts[0]]},
+    )
+    if key.startswith(("concurrency.", "logging.", "api.", "app.", "ops.")):
+        result["effective_from"] = "restart required"
+    return result
 
 
 @router.post("/settings/preview")
@@ -3537,20 +3736,35 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
     promote_id = int(promote_raw) if isinstance(promote_raw, int | str) and str(
         promote_raw
     ).isdigit() else None
-    # Promote, and loosening any risk limit, need "Confirm it is you";
-    # tightening a limit never asks (design, Settings → Access).
-    loosens = _settings_loosen_risk(cleaned, base)
-    # Changing the heartbeat URL is a confirm action too (design, Access).
-    new_hb = (cleaned.get("ops") or {}).get("heartbeat_url")
-    hb_changed = (
-        new_hb is not None
-        and new_hb != _nested_get(base, "ops", "heartbeat_url")
-    )
-    if promote_id is not None or loosens or hb_changed:
+    # Promote, and every loosening (item 082), need "Confirm it is
+    # you"; tightening never asks (design, Settings → Access). The 403
+    # carries the changes that need it so the dialog can list them.
+    new_tree = _deep_merge(base, cleaned)
+    # The heartbeat URL is a write-only secret (item 081): it never
+    # belongs to a settings version, so every saved tree blanks it —
+    # including a value still sitting in config or an old version.
+    new_tree.setdefault("ops", {})["heartbeat_url"] = ""
+    confirm = confirm_fields(base, new_tree)
+    if promote_id is not None or confirm:
         from app.auth.api import require_confirmed
 
-        require_confirmed(request)
-    new_tree = _deep_merge(base, cleaned)
+        require_confirmed(request, fields=confirm or None)
+    return _store_settings(request, new_tree, reason, changes, promote_id, cleaned)
+
+
+def _store_settings(
+    request: Request,
+    new_tree: dict[str, Any],
+    reason: str,
+    changes: list[str],
+    promote_id: int | None = None,
+    cleaned: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    from app.settings_service import refresh_saved_without_control
+
+    config = get_config()
+    base = config.pending() or config.effective()
+    cleaned = cleaned or {}
     with get_session_maker()() as session:
         if promote_id is not None:
             check_promotion(session, config, promote_id)
@@ -3561,6 +3775,8 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         if promote_id is not None:
             finish_promotion(session, promote_id, version, _clock(request).now())
         session.commit()
+        refresh_saved_without_control(config, session)
+    logger.info("settings version %s saved", version)
     # The pending version must be the full merged tree, same as the stored
     # row — passing only ``cleaned`` would silently revert every earlier
     # saved change at the next cycle's promotion.
@@ -3607,25 +3823,6 @@ def _model_options(request: Request) -> list[dict[str, object]]:
 def _clock(request: Request) -> Clock:
     clock = getattr(request.app.state, "clock", None)
     return clock if clock is not None else make_clock()
-
-
-def _settings_loosen_risk(
-    submitted: dict[str, object], base: dict[str, object]
-) -> bool:
-    """True when a numeric risk limit goes up — loosening asks for a
-    fresh confirmation; tightening never does (design, Access)."""
-    new_risk = submitted.get("risk")
-    if not isinstance(new_risk, dict):
-        return False
-    old_risk = _nested_get(base, "risk") or {}
-    for key, value in new_risk.items():
-        old = old_risk.get(key) if isinstance(old_risk, dict) else None
-        try:
-            if value is not None and old is not None and float(value) > float(old):
-                return True
-        except (TypeError, ValueError):
-            continue
-    return False
 
 
 # ----------------------------------------------------------------------
@@ -4283,7 +4480,9 @@ def performance_tails(request: Request, run: int | None = None) -> dict[str, obj
     """
     config = get_config()
     with get_session_maker()() as session:
-        payload = compute_tails_payload(session, config=config, run_id=run)
+        payload = compute_tails_payload(
+            session, config=config, calendar=_calendar(request), run_id=run
+        )
     if payload.get("empty") and run is not None:
         raise HTTPException(status_code=404, detail="run not found")
     return payload
@@ -4557,6 +4756,135 @@ def _briefing_chips(facts: dict[str, Any]) -> list[dict[str, str]]:
     return chips
 
 
+def _ordinal(value: float) -> str:
+    n = int(value)
+    suffix = (
+        "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    )
+    return f"{n}{suffix}"
+
+
+def _briefing_numbers(facts: dict[str, Any]) -> list[dict[str, str]]:
+    """The "The numbers" fold rows for a briefing story (design Main and
+    Reviews, item 079): every fact the model was given, as label–value
+    rows in the design's order. The GUI only renders them."""
+    rows: list[dict[str, str]] = []
+
+    positions = facts.get("positions")
+    if isinstance(positions, list):
+        if not positions:
+            rows.append({"label": "Open positions", "value": "none"})
+        else:
+            bits = []
+            for p in positions:
+                price = p.get("price")
+                bits.append(
+                    f"{p.get('symbol')} {p.get('qty')} sh"
+                    + (f" @ ${float(price):,.2f}" if price is not None else "")
+                )
+            rows.append(
+                {"label": "Open positions", "value": f"{len(positions)} · " + ", ".join(bits)}
+            )
+            for p in positions:
+                price, stop, dist = (
+                    p.get("price"),
+                    p.get("stop"),
+                    p.get("stop_distance_pct"),
+                )
+                if price is None:
+                    value = "no fresh price"
+                else:
+                    value = f"last close ${float(price):,.2f}"
+                    if stop is not None:
+                        value += f" · stop ${float(stop):,.2f}"
+                    if dist is not None:
+                        value += f" · {float(dist):.1f}% above the stop"
+                rows.append({"label": str(p.get("symbol")), "value": value})
+    else:
+        rows.append({"label": "Open positions", "value": "unavailable"})
+
+    yesterday = facts.get("yesterday") or {}
+    y_pct, y_usd = yesterday.get("return_pct"), yesterday.get("return_usd")
+    rows.append(
+        {
+            "label": "Yesterday",
+            "value": (
+                f"{'+' if y_usd >= 0 else '−'}${abs(float(y_usd)):,.2f} · "
+                f"{float(y_pct):+.2f}%"
+                if y_pct is not None and y_usd is not None
+                else "unavailable"
+            ),
+        }
+    )
+    spy = yesterday.get("spy_return_pct")
+    rows.append(
+        {
+            "label": "SPY yesterday",
+            "value": f"{float(spy):+.2f}%" if spy is not None else "unavailable",
+        }
+    )
+    regime = facts.get("regime")
+    rows.append(
+        {
+            "label": "Regime",
+            "value": str(regime) if regime else "unavailable",
+        }
+    )
+    vix = facts.get("vix")
+    if isinstance(vix, dict) and vix.get("close") is not None:
+        pct = vix.get("percentile_1y")
+        vix_value = f"{float(vix['close']):g}"
+        if pct is not None:
+            vix_value += f" · {_ordinal(float(pct))} percentile"
+        rows.append({"label": "VIX", "value": vix_value})
+    else:
+        rows.append({"label": "VIX", "value": "unavailable"})
+
+    earnings = [
+        *(f"{e['symbol']} today" for e in facts.get("earnings_today") or []),
+        *(
+            f"{e['symbol']} tomorrow"
+            for e in facts.get("earnings_tomorrow") or []
+        ),
+    ]
+    rows.append(
+        {
+            "label": "Earnings today or tomorrow",
+            "value": " · ".join(earnings) if earnings else "none",
+        }
+    )
+    release = facts.get("next_release")
+    if isinstance(release, dict) and release.get("label"):
+        try:
+            day = datetime.fromisoformat(str(release.get("date"))).date()
+            when = f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
+        except ValueError:
+            when = str(release.get("date") or "")
+        rows.append(
+            {
+                "label": "Next release",
+                "value": (
+                    f"{release['label']} · {when} "
+                    f"{release.get('time', '')} NY"
+                ),
+            }
+        )
+    else:
+        rows.append({"label": "Next release", "value": "none"})
+    banners = facts.get("banners") or []
+    rows.append(
+        {
+            "label": "Banners",
+            "value": (
+                " · ".join(str(b.get("kind", "")).replace("_", " ") for b in banners)
+                if banners
+                else "none"
+            ),
+        }
+    )
+    return rows
+
+
 def _briefing_card(
     request: Request, clock: Clock, app_tz: ZoneInfo, today_ny: date
 ) -> dict[str, Any]:
@@ -4589,6 +4917,11 @@ def _briefing_card(
             "status_line": status_line,
             "text": text,
             "chips": _briefing_chips(review.facts or {}),
+            # Stories (item 079): the fold's rows and the glossary the
+            # story's underlined terms resolve against.
+            "numbers": _briefing_numbers(review.facts or {}),
+            "glossary": (review.facts or {}).get("glossary") or {},
+            "fact_count": len(review.facts or {}),
             "source": review.source,
             "reason": review.reason,
             "model": review.model,
@@ -4665,6 +4998,27 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             if last_cycle is not None
             else []
         )
+        # Item 073: the strip's numbers and the Last cycle tile read the
+        # latest cycle's stored duration plus its decisions.
+        last_cycle_calls = sum(
+            1 for d in cycle_decisions if d.model != "none"
+        )
+        last_cycle_cost = sum(
+            (d.cost or Decimal(0)) for d in cycle_decisions
+        )
+        took_warn = bool(
+            last_cycle is not None
+            and last_cycle.duration_seconds is not None
+            and last_cycle.duration_seconds
+            > float(
+                config.get(
+                    "schedule",
+                    "cycle_duration_warn_minutes",
+                    default=10,
+                )
+            )
+            * 60
+        )
         open_rows = session.execute(
             select(Position).where(Position.closed_at.is_(None))
         ).scalars().all()
@@ -4739,7 +5093,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
                         / run.spy_close
                         * 100
                     )
-        since_label = f"since {run.started_at.astimezone(app_tz).strftime('%d %b')}"
+        # Item 073 tile sub: "started 5 Oct" (design/screens/Main.dc.html).
+        started_ny = run.started_at.astimezone(app_tz)
+        since_label = f"started {started_ny.day} {started_ny.strftime('%b')}"
 
     # Latest decision card.
     latest_card = None
@@ -4750,22 +5106,17 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         output = d.model_output or {}
         rules = d.rules_result or {}
         snapshot = d.input_snapshot or {}
-        if d.final_action == "no_call":
-            if d.no_call_reason in (None, "rules"):
-                why = rules.get("reason") or "failed the pre-filter"
-            elif d.prompt_version == "decision.v3" and validation.get("error"):
-                why = f"{d.no_call_reason} · {validation['error']}"
-            else:
-                why = validation.get("error") or _NO_CALL_WHY.get(
-                    d.no_call_reason,
-                    str(d.no_call_reason).replace("_", " "),
-                )
-        else:
-            why = (
+        why = (
+            # Item 073: the card prefixes the reason label itself
+            # ("pre-filter: …"), so `why` carries the detail only.
+            _no_call_detail(d, rules, validation, last_cycle_calls)
+            if d.final_action == "no_call"
+            else (
                 output.get("thesis")
                 or validation.get("note")
                 or validation.get("error")
             )
+        )
         latest_card = {
             "id": d.id,
             "symbol": d.symbol,
@@ -4779,6 +5130,10 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             ),
             "why": why,
             "model": d.model,
+            # Item 073: the meta line's "model · prompt version" and the
+            # Context group's release chips.
+            "prompt_version": d.prompt_version,
+            "release_next_morning": d.release_next_morning,
             "regime": snapshot.get("regime"),
             "vix": _cycle_vix(d.cycle_id),
             "earnings": latest_earnings,
@@ -4873,10 +5228,15 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         prefilter_failed = sum(
             1 for d in cycle_decisions if d.no_call_reason == "rules"
         )
-        calls = sum(1 for d in cycle_decisions if d.model != "none")
-        cost = sum(
-            (d.cost or Decimal(0)) for d in cycle_decisions
+        # Item 073: candidates that got past the rules pre-filter —
+        # called or stopped later (call cap, price, options, checks).
+        passed = sum(
+            1
+            for d in cycle_decisions
+            if d.context != "held" and d.no_call_reason != "rules"
         )
+        calls = last_cycle_calls
+        cost = last_cycle_cost
         entered = sum(1 for d in cycle_decisions if d.final_action == "enter")
         blocked = sum(1 for d in cycle_decisions if d.final_action == "blocked")
         skipped = sum(1 for d in cycle_decisions if d.final_action == "skip")
@@ -4935,6 +5295,29 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "text": " ".join(sentences),
             "cycle_index": cycle_index,
             "cycles_today": len(active_shown),
+            # Item 073: the strip's sentence and labelled values are
+            # built from these numbers, not parsed out of `text`.
+            "time": scheduled_ny.isoformat(),
+            "cycle_id": last_cycle.id,
+            "summary": {
+                "checked": len(cycle_decisions),
+                "passed": passed,
+                "calls": calls,
+                "cost": str(cost),
+                "took_seconds": (
+                    float(last_cycle.duration_seconds)
+                    if last_cycle.duration_seconds is not None
+                    else None
+                ),
+                "took_warn": took_warn,
+                "changes": _cycle_changes(cycle_decisions),
+                # Item 073: the sentence's outcome clause.
+                "held": held_ctx,
+                "skipped": skipped,
+                "entered": entered,
+                "blocked": blocked,
+                "approved": approved_count,
+            },
         }
 
     # Cycle counter at the strip's right end (docs/SPEC.md, GUI). The whole
@@ -5129,6 +5512,23 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         },
         "cycle_line": cycle_line,
         "cycle_counter": cycle_counter,
+        # Item 073: the Last cycle tile — duration, call count and the
+        # slow-cycle flag, off-hours included.
+        "last_cycle": (
+            {
+                "cycle_id": last_cycle.id,
+                "time": last_cycle.scheduled_time.replace(tzinfo=UTC).isoformat(),
+                "took_seconds": (
+                    float(last_cycle.duration_seconds)
+                    if last_cycle.duration_seconds is not None
+                    else None
+                ),
+                "calls": last_cycle_calls,
+                "took_warn": took_warn,
+            }
+            if last_cycle is not None
+            else None
+        ),
         "stats": {
             "positions": len(open_rows),
             "positions_cap": config.get("risk", "max_open_positions", default=4),
@@ -5182,17 +5582,80 @@ def _session_date_label(day: date) -> str:
 
 # Why a symbol reached no model call, for the latest-decision card
 # (docs/SPEC.md: "why from the stored snapshot — pre-filter reason, call
-# cap, price check").
+# cap, price check"). Item 073: these are the detail under the card's
+# "<reason>: " label, not a sentence — the GUI adds the label.
 _NO_CALL_WHY = {
-    "call_cap": "call cap reached — the model was not asked",
-    "price_stale": "no fresh price — the model was not asked",
-    "price_suspect": "price check failed — the model was not asked",
+    "call_cap": "the call cap was reached",
+    "price_stale": "no fresh price",
+    "price_suspect": "the price check failed",
     # Stored decisions from before the Oct-24 rename keep the old name.
-    "quote_suspect": "price check failed — the model was not asked",
+    "quote_suspect": "the price check failed",
     "model_error": "the model call failed",
-    "no_options": "no option met the rules — the model was not asked",
-    "reference_missing": "no usable reference price — the model was not asked",
+    "no_options": "no option met the rules",
+    "reference_missing": "no usable reference price",
+    "checks": "a decision check failed",
 }
+
+
+def _no_call_detail(
+    decision: Decision,
+    rules: dict[str, object],
+    validation: dict[str, object],
+    cycle_calls: int,
+) -> str:
+    """The detail under the latest-decision card's "<reason>: " label
+    (item 073): the pre-filter's failing check, how many calls took the
+    cap slots, or the stored validation error."""
+    reason = decision.no_call_reason or "rules"
+    if reason in (None, "rules"):
+        reason_text = rules.get("reason")
+        # No detail: the card's "pre-filter" label stands alone.
+        return str(reason_text) if reason_text else ""
+    if reason == "call_cap":
+        if cycle_calls:
+            return f"{cycle_calls} calls went to higher-ranked symbols"
+        return "the call cap was reached"
+    error = str(validation.get("error") or "").strip()
+    # The stored error can be the bare reason code — that adds nothing
+    # under the label, so fall back to the shared wording.
+    if error and error != reason:
+        return error
+    return _NO_CALL_WHY.get(reason, reason.replace("_", " "))
+
+
+def _cycle_changes(decisions: Sequence[Decision]) -> str:
+    """The strip sentence's last clause (item 073): what the cycle
+    changed — "nothing changed", "1 entry: MSFT", "JPM stop raised"."""
+    enters = [d.symbol for d in decisions if d.final_action == "enter"]
+    exits = [d.symbol for d in decisions if d.final_action == "exit"]
+    stops = [
+        d.symbol for d in decisions if d.final_action == "tighten_stop"
+    ]
+    pending = sum(
+        1
+        for d in decisions
+        if (d.gates_result or {}).get("pending_approval")
+    )
+    parts: list[str] = []
+    if enters:
+        parts.append(
+            f"{len(enters)} entr{'y' if len(enters) == 1 else 'ies'}: "
+            + ", ".join(enters)
+        )
+    if exits:
+        parts.append(
+            f"{len(exits)} exit{'s' if len(exits) != 1 else ''}: "
+            + ", ".join(exits)
+        )
+    if stops:
+        parts.append(
+            f"{stops[0]} stop raised"
+            if len(stops) == 1
+            else f"{len(stops)} stops raised: {', '.join(stops)}"
+        )
+    if pending:
+        parts.append(f"{pending} awaiting approval")
+    return "; ".join(parts) if parts else "nothing changed"
 
 
 def _feed_change(decision: Decision) -> bool:
@@ -5591,6 +6054,9 @@ def review_detail(review_id: int) -> dict[str, object]:
                 **content,
                 "text": content["text"][len(status) :].lstrip(),
             }
+        # Stories (item 079): same "The numbers" rows as the dashboard.
+        detail["numbers"] = _briefing_numbers(review.facts or {})
+        detail["fact_count"] = len(review.facts or {})
     return detail
 
 
@@ -5917,6 +6383,146 @@ async def universe_screen_now(request: Request) -> dict[str, object]:
     return result
 
 
+# ----------------------------------------------------------------------
+# Sync runs (item 077): what the app is loading and what failed. The
+# sync_runs table is written by the jobs themselves; these routes only
+# read it and start a retry.
+
+
+def _syncs(request: Request) -> SyncRuns:
+    syncs = getattr(request.app.state, "syncs", None)
+    if syncs is None:
+        raise HTTPException(status_code=503, detail="sync tracking unavailable")
+    return cast(SyncRuns, syncs)
+
+
+@router.get("/universe/sync")
+def universe_sync(request: Request) -> dict[str, object]:
+    """The latest sync_runs row per job, plus the history job's live
+    progress (symbols ready of total, time left from its own pace)."""
+    return _syncs(request).describe()
+
+
+async def _retry_sync_job(
+    request: Request, job: str, symbols: list[str]
+) -> None:
+    """Re-run ``job`` for its failed symbols in the background.
+
+    Every fetch goes through the shared data services, so the retry
+    shares the Alpaca rate limiter with live work like any other job
+    (item 078's live-first rule applies to model calls; data fetches
+    already queue on the same limiter). Each path writes a fresh
+    sync_runs row through the same tracked wrappers the scheduled jobs
+    use.
+    """
+    from app.engine.cycle import BAR_TOPUP
+
+    syncs = _syncs(request)
+    market_data = getattr(request.app.state, "market_data", None)
+    sources = getattr(request.app.state, "data_sources", None)
+    clock = getattr(request.app.state, "clock", None)
+    if market_data is None or sources is None or clock is None:
+        logger.error("sync retry %s: services unavailable", job)
+        return
+    now = clock.now()
+    today = now.astimezone(NY_TZ).date()
+    try:
+        if job == "daily_bars":
+            await tracked_symbols(
+                syncs,
+                "daily_bars",
+                symbols or market_data.universe(),
+                lambda group, on_symbol: market_data.refresh_daily(
+                    today, now, symbols=group, on_symbol=on_symbol
+                ),
+                "daily bars",
+            )
+        elif job == "bars_5m":
+            await tracked_symbols(
+                syncs,
+                "bars_5m",
+                symbols or market_data.universe(),
+                lambda group, on_symbol: market_data.refresh_bars(
+                    now - BAR_TOPUP, now, group, on_symbol=on_symbol
+                ),
+                "5m bars",
+            )
+        elif job == "history":
+            await _universe(request).warm_up(symbols or None)
+        elif job == "screen":
+            await _universe(request).run_screen()
+        elif job == "earnings":
+            await tracked_fetch(
+                syncs,
+                "earnings",
+                lambda: market_data.refresh_earnings(
+                    today - timedelta(days=30), today + timedelta(days=90)
+                ),
+            )
+        elif job == "corporate_actions":
+            await tracked_fetch(
+                syncs,
+                "corporate_actions",
+                lambda: market_data.refresh_corporate_actions(
+                    today - timedelta(days=30), today + timedelta(days=90)
+                ),
+            )
+        elif job == "ecb":
+            await tracked_fetch(
+                syncs, "ecb", lambda: sources.fx.fetch_fx(today)
+            )
+        elif job == "fred":
+            vix = getattr(request.app.state, "vix", None)
+            releases = getattr(request.app.state, "releases", None)
+            fetches = []
+            if vix is not None:
+                fetches.append(("VIX (FRED)", lambda: vix.refresh(today)))
+            if releases is not None:
+                fetches.append(
+                    ("release calendar", lambda: releases.refresh(today))
+                )
+            if fetches:
+                await tracked_fetches(syncs, "fred", fetches)
+    except Exception:  # noqa: BLE001 - the run row already records it
+        logger.exception("sync retry for %s failed", job)
+    finally:
+        _notify(request, "universe")
+
+
+@router.post("/universe/sync/{job}/retry", status_code=202)
+async def universe_sync_retry(request: Request, job: str) -> dict[str, object]:
+    """Re-run a failed sync job for its failed symbols (item 077).
+
+    409 while a cycle runs or the job itself is still running — a retry
+    is refused, never queued. 422 when the latest run has no failures.
+    """
+    if job not in SYNC_JOBS:
+        raise HTTPException(status_code=422, detail=f"unknown sync job {job!r}")
+    syncs = _syncs(request)
+    if syncs.cycle_active() or syncs.running(job):
+        raise HTTPException(
+            status_code=409, detail="a cycle or this job is already running"
+        )
+    latest = syncs.latest_run(job)
+    failures = list(latest.failures or []) if latest is not None else []
+    if not failures:
+        raise HTTPException(status_code=422, detail="the job has no failures")
+    # Per-symbol jobs record the symbol in ``what``; source-level jobs
+    # record the source, and an aborted run records the job itself —
+    # those retries cover the job's whole scope.
+    symbols = [
+        str(f.get("what"))
+        for f in failures
+        if f.get("what") not in (None, job)
+        and job in ("daily_bars", "bars_5m", "history")
+    ]
+    from app.spawn import spawn
+
+    spawn(_retry_sync_job(request, job, symbols), f"sync-retry-{job}")
+    _notify(request, "universe")
+    return {"job": job, "accepted": True}
+
+
 # ---------------------------------------------------------------------------
 # Frontend error reporting (docs/SPEC.md, Error handling)
 
@@ -6143,10 +6749,28 @@ def api_logs(request: Request) -> dict[str, object]:
 
 @router.get("/logs/summary")
 def api_logs_summary(request: Request) -> dict[str, object]:
-    """Warnings/errors per day + recurring problems by fingerprint."""
+    """Warnings/errors per day + recurring problems by fingerprint.
+
+    Item 100: problems cover WARNING and up inside the requested
+    ``from``/``to`` period, carry an ``attention`` level (act / watch /
+    none) and are sorted by it; the response holds the three counts.
+    """
     conn = _log_db(request)
     if conn is None:
         return {"days": [], "problems": [], "index_available": False}
+    from_ts = str(request.query_params.get("from") or "")[:40]
+    to_ts = str(request.query_params.get("to") or "")[:40]
+    where = ""
+    args: list[str] = []
+    if from_ts:
+        where += " AND ts >= ?"
+        args.append(from_ts)
+    if to_ts:
+        where += " AND ts <= ?"
+        args.append(to_ts)
+    watch_min = int(
+        get_config().get("gui", "log_watch_min_count", default=5)
+    )
     with contextlib.closing(conn), conn:
         days = conn.execute(
             "SELECT substr(ts,1,10) day, level, count(*) FROM log_lines "
@@ -6157,10 +6781,12 @@ def api_logs_summary(request: Request) -> dict[str, object]:
             "SELECT level, count(*) FROM log_lines GROUP BY level"
         ).fetchall()
         problems = conn.execute(
-            "SELECT fingerprint, level, min(ts) first_ts, max(ts) last_ts, "
+            "SELECT fingerprint, level, min(ts) first_ts, max(ts) last_ts, "  # noqa: S608 - fixed fragments, values bound
             "count(*) n, substr(message,1,160) sample FROM log_lines "
-            "WHERE level IN ('ERROR','CRITICAL') "
-            "GROUP BY fingerprint ORDER BY last_ts DESC LIMIT 50"
+            "WHERE level IN ('WARNING','ERROR','CRITICAL') "
+            + where
+            + " GROUP BY fingerprint ORDER BY last_ts DESC LIMIT 50",
+            args,
         ).fetchall()
         # Review state for each fingerprint (step 8: log_reviews), plus
         # the set Readiness counts as unreviewed: a "fixed" problem that
@@ -6198,22 +6824,48 @@ def api_logs_summary(request: Request) -> dict[str, object]:
         except Exception:  # noqa: BLE001 - table may predate the migration
             logging.getLogger("app.api").debug("log_reviews not available yet")
             unreviewed_fps = None
-    return {
-        "days": [{"day": d, "level": lv, "count": c} for d, lv, c in days],
-        "level_counts": dict(level_counts),
-        "problems": [
+    attention_rank = {"act": 0, "watch": 1, "none": 2}
+    out: list[dict[str, Any]] = []
+    for fp, lv, fts, ts, n, smp in problems:
+        unreviewed = (
+            fp not in reviews
+            if unreviewed_fps is None
+            else fp in unreviewed_fps
+        )
+        # One attention rule for Needs you, Readiness and this list
+        # (item 100): CRITICAL, or ERROR unreviewed_error_fingerprints
+        # counts → act; a WARNING counted watch_min times → watch.
+        if lv == "CRITICAL" or (lv == "ERROR" and unreviewed):
+            attention = "act"
+        elif lv == "WARNING" and int(n) >= watch_min:
+            attention = "watch"
+        else:
+            attention = "none"
+        out.append(
             {
                 "fingerprint": fp, "level": lv, "first_ts": fts,
                 "last_ts": ts, "count": n,
                 "sample": smp, "review": reviews.get(fp),
-                "unreviewed": (
-                    fp not in reviews
-                    if unreviewed_fps is None
-                    else fp in unreviewed_fps
-                ),
+                "unreviewed": unreviewed,
+                "attention": attention,
             }
-            for fp, lv, fts, ts, n, smp in problems
-        ],
+        )
+    # Stable sorts: last seen newest first, then attention, then count.
+    out.sort(key=lambda p: str(p["last_ts"]), reverse=True)
+    out.sort(
+        key=lambda p: (
+            attention_rank[str(p["attention"])],
+            -int(p["count"]),
+        )
+    )
+    return {
+        "days": [{"day": d, "level": lv, "count": c} for d, lv, c in days],
+        "level_counts": dict(level_counts),
+        "problems": out,
+        "attention_counts": {
+            level: sum(1 for p in out if p["attention"] == level)
+            for level in ("act", "watch", "none")
+        },
         "index_available": True,
     }
 
@@ -6344,10 +6996,22 @@ def server_status(request: Request) -> dict[str, object]:
 
     db = Path(config.env.sa_db_path)
     backups = sorted(dated_backups(db.parent / "backups", db.name))
+    # Item 084: the image runs by digest; SA_IMAGE_VERIFIED is the UTC
+    # time deploy.sh verified the cosign signature, "no" for --unverified.
+    image = os.environ.get("SA_IMAGE", "")
+    image_digest = (
+        image.rsplit("@", 1)[-1] if "@sha256:" in image else ""
+    )
+    image_verified = os.environ.get("SA_IMAGE_VERIFIED", "")
     return {
         "version": request.app.version,
         "image_tag": os.environ.get("SA_VERSION", ""),
-        "deployed_at": os.environ.get("SA_DEPLOYED_AT", ""),
+        "image_digest": image_digest,
+        # UTC time deploy.sh verified the signature; "" when the image
+        # ran with --unverified or was never verified.
+        "image_verified_at": (
+            image_verified if image_verified not in ("", "no") else ""
+        ),
         "public_url": config.env.sa_public_url,
         "instance_id": config.env.sa_instance_id,
         "started_at": started_at,
@@ -6359,7 +7023,7 @@ def server_status(request: Request) -> dict[str, object]:
         "backups": status.get("backups"),
         "host": ops.host_status() if ops is not None else {},
         "heartbeat": {
-            "url": (ops.heartbeat_url() if ops is not None else ""),
+            "masked": ops.heartbeat_masked() if ops is not None else None,
             "last_ping": getattr(ops, "last_heartbeat_at", None),
             "configured": bool(ops and ops.heartbeat_url()),
         },
@@ -6367,6 +7031,45 @@ def server_status(request: Request) -> dict[str, object]:
         # "Config: n local overrides · n unknown keys" (item 050).
         "config_layers": config.layer_counts(),
     }
+
+
+@router.post("/server/heartbeat")
+def server_heartbeat_set(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Save the dead-man's-switch URL — write-only like an API key.
+
+    ``ops.heartbeat_url`` in config is imported into secrets once at
+    startup and ignored afterwards (item 081); the API only ever shows
+    the masked host. Saving asks for "Confirm it is you".
+    """
+    ops = _ops(request)
+    secrets = _secrets(request)
+    if ops is None or secrets is None:
+        raise HTTPException(status_code=404, detail="not available")
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
+    url = str(body.get("url") or "").strip()
+    try:
+        clean = ops.validate_heartbeat_url(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=[safe_error(exc)]) from exc
+    try:
+        secrets.save("heartbeat_url", clean)
+    except SecretError as exc:
+        raise HTTPException(status_code=422, detail=[safe_error(exc)]) from exc
+    return {"ok": True, "masked": ops.heartbeat_masked()}
+
+
+@router.post("/server/heartbeat/remove")
+def server_heartbeat_remove(request: Request) -> dict[str, object]:
+    """Delete the stored heartbeat URL."""
+    secrets = _secrets(request)
+    if secrets is None:
+        raise HTTPException(status_code=404, detail="not available")
+    secrets.remove("heartbeat_url")
+    return {"ok": True}
 
 
 @router.post("/server/backup-now")
@@ -6379,7 +7082,7 @@ async def server_backup_now(request: Request) -> dict[str, object]:
     try:
         await run_in_threadpool(create_backup, _clock(request))
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=[f"backup failed: {exc}"]) from exc
+        raise HTTPException(status_code=500, detail=[f"backup failed: {safe_error(exc)}"]) from exc
     return {"ok": True}
 
 
@@ -6507,7 +7210,7 @@ async def server_backup_credentials(
     try:
         endpoint = validate_public_https_url(endpoint)
     except UrlRejected as exc:
-        errors.append(f"endpoint: {exc}")
+        errors.append(f"endpoint: {safe_error(exc)}")
     for name, value in (
         ("bucket", bucket),
         ("access_key_id", access_key_id),

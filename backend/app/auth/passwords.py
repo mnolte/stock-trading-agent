@@ -5,9 +5,10 @@
   step, 6 digits, ±1 step of clock drift).
 - Recovery codes: 12-char groups of unambiguous characters, shown once
   and stored as SHA-256 hashes.
-- Session, pending and CSRF tokens: ``secrets.token_urlsafe`` with a
-  ``sat_`` / ``sap_`` / ``sac_`` prefix so the log scrubber can recognise
-  them by shape even when a value was never registered.
+- Session, pending, CSRF and device tokens: ``secrets.token_urlsafe``
+  with a ``sat_`` / ``sap_`` / ``sac_`` / ``sad_`` prefix so the log
+  scrubber can recognise them by shape even when a value was never
+  registered.
 """
 
 from __future__ import annotations
@@ -57,6 +58,11 @@ def new_pending_token() -> str:
 
 def new_csrf_token() -> str:
     return "sac_" + secrets.token_urlsafe(24)
+
+
+def new_device_token() -> str:
+    """The trusted-device cookie value (item 083): 32 random bytes."""
+    return "sad_" + secrets.token_urlsafe(32)
 
 
 def new_totp_secret() -> str:

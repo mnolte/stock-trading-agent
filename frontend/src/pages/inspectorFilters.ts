@@ -6,7 +6,7 @@
  * Everything here is pure so the page stays thin and the logic testable.
  */
 
-import type { LlmCallRow, LlmCallSource } from '../types/api';
+import type { LlmCallAttention, LlmCallRow, LlmCallSource } from '../types/api';
 import { REASON_CODES, labelFor } from '../labels';
 
 export type Period = 'last' | '5' | '20' | 'all' | 'custom';
@@ -77,6 +77,19 @@ export const ACTION_OPTIONS = [
   'no_call',
 ];
 
+export const ATTENTION_LEVELS: {
+  value: LlmCallAttention;
+  label: string;
+}[] = [
+  { value: 'none', label: 'Nothing to do' },
+  { value: 'watch', label: 'Keep an eye on it' },
+  { value: 'act', label: 'Needs you' },
+];
+
+export function attentionLabel(level: LlmCallAttention | string): string {
+  return ATTENTION_LEVELS.find((l) => l.value === level)?.label ?? level;
+}
+
 export interface InspectorFilters {
   period: Period;
   /** Custom range (session dates, YYYY-MM-DD) — only when period=custom. */
@@ -91,6 +104,8 @@ export interface InspectorFilters {
   prompt?: string;
   strategy?: string;
   cycle?: string;
+  attention?: LlmCallAttention;
+  kind?: string;
   order: 'desc' | 'asc';
   call?: number;
 }
@@ -128,6 +143,13 @@ export function parseFilters(params: URLSearchParams): InspectorFilters {
     prompt: params.get('prompt') ?? undefined,
     strategy: params.get('strategy') ?? undefined,
     cycle: params.get('cycle') ?? undefined,
+    attention:
+      params.get('attention') === 'watch' ||
+      params.get('attention') === 'act' ||
+      params.get('attention') === 'none'
+        ? (params.get('attention') as LlmCallAttention)
+        : undefined,
+    kind: params.get('kind') ?? undefined,
     order: params.get('order') === 'asc' ? 'asc' : 'desc',
     call: call ? Number(call) : undefined,
   };
@@ -173,6 +195,8 @@ export function apiFilters(
     prompt: filters.prompt,
     strategy: filters.strategy,
     cycle: filters.cycle,
+    attention: filters.attention,
+    kind: filters.kind,
   };
 }
 
@@ -192,7 +216,7 @@ export function toSearchParams(filters: InspectorFilters): URLSearchParams {
   if (nonDefault) {
     params.set('source', filters.sources.join(',') || 'none');
   }
-  for (const key of ['symbol', 'action', 'reason', 'model', 'prompt', 'strategy', 'cycle'] as const) {
+  for (const key of ['symbol', 'action', 'reason', 'model', 'prompt', 'strategy', 'cycle', 'attention', 'kind'] as const) {
     if (filters[key]) params.set(key, filters[key]!);
   }
   if (filters.order !== 'desc') params.set('order', filters.order);
@@ -202,7 +226,7 @@ export function toSearchParams(filters: InspectorFilters): URLSearchParams {
 
 /** Number of "More" filters currently set (the phone button's count). */
 export function moreFilterCount(filters: InspectorFilters): number {
-  return ['symbol', 'action', 'reason', 'model', 'prompt', 'strategy', 'cycle']
+  return ['symbol', 'action', 'reason', 'model', 'prompt', 'strategy', 'cycle', 'attention', 'kind']
     .filter((k) => Boolean(filters[k as keyof InspectorFilters]))
     .length;
 }
@@ -265,4 +289,85 @@ export function rowContext(call: LlmCallRow): string {
 export function chipText(call: LlmCallRow): string {
   if (call.outcome === 'success') return 'success';
   return call.reasons.map((r) => REASON_LABELS[r] ?? labelFor(REASON_CODES, r)).join(', ');
+}
+
+// --- List folding (item 074) ----------------------------------------------
+
+export type ListItem =
+  | { type: 'call'; call: LlmCallRow }
+  | { type: 'fold'; key: string; calls: LlmCallRow[] };
+
+const KIND_TITLES: Record<string, string> = {
+  briefing: 'Briefing',
+  weekly: 'Weekly',
+  verdict: 'Verdict',
+};
+
+function foldable(call: LlmCallRow): boolean {
+  // Errors and code-changed actions never fold (docs/SPEC.md).
+  return (
+    call.outcome !== 'error' &&
+    !call.reasons.includes('changed_by_code') &&
+    call.final_action !== null
+  );
+}
+
+function sameFold(a: LlmCallRow, b: LlmCallRow): boolean {
+  return (
+    a.source === b.source &&
+    a.kind === b.kind &&
+    a.final_action === b.final_action &&
+    a.outcome === b.outcome &&
+    a.reasons.join(',') === b.reasons.join(',')
+  );
+}
+
+/** Fold consecutive calls with identical source, kind, action, outcome
+ * and reasons into one row — except runs containing the selected call,
+ * which stay open so selection always lands on a real row. */
+export function foldCalls(calls: LlmCallRow[], selectedId?: number): ListItem[] {
+  const items: ListItem[] = [];
+  let i = 0;
+  while (i < calls.length) {
+    const call = calls[i];
+    if (!foldable(call)) {
+      items.push({ type: 'call', call });
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    while (j < calls.length && foldable(calls[j]) && sameFold(call, calls[j])) {
+      j += 1;
+    }
+    const run = calls.slice(i, j);
+    if (run.length >= 2 && !run.some((c) => c.id === selectedId)) {
+      items.push({
+        type: 'fold',
+        key: `fold-${call.id}`,
+        calls: run,
+      });
+    } else {
+      for (const c of run) items.push({ type: 'call', call: c });
+    }
+    i = j;
+  }
+  return items;
+}
+
+/** The folded row's label: "Verdict ×9 · input incomplete". */
+export function foldLabel(fold: { calls: LlmCallRow[] }): string {
+  const first = fold.calls[0];
+  const kind =
+    first.source === 'review'
+      ? (KIND_TITLES[first.kind] ?? 'Review')
+      : first.source === 'shadow'
+        ? 'Shadow'
+        : first.source === 'ask'
+          ? 'Ask'
+          : (first.symbol ?? 'Call');
+  const reason =
+    first.reasons.length > 0
+      ? ` · ${first.reasons.map((r) => REASON_LABELS[r] ?? labelFor(REASON_CODES, r)).join(', ')}`
+      : '';
+  return `${kind} ×${fold.calls.length}${reason}`;
 }

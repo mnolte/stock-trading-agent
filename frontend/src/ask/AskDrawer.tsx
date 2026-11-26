@@ -72,6 +72,7 @@ export function AskDrawer() {
   const [contextCleared, setContextCleared] = useState(false);
   const [threadContext, setThreadContext] = useState<AskContext | null>(null);
   const [noteMax, setNoteMax] = useState(100);
+  const [atBottom, setAtBottom] = useState(true);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
   const queued = useRef<string | null>(null);
@@ -96,9 +97,18 @@ export function AskDrawer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ask.open]);
 
+  // Follow the stream only while the reader is at the bottom; scrolled
+  // up during a stream, "Jump to latest" appears instead (item 109).
   useEffect(() => {
-    logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-  }, [draft.messages, draft.streamingText, draft.liveSteps]);
+    const el = logRef.current;
+    if (el && atBottom) el.scrollTo({ top: el.scrollHeight });
+  }, [draft.messages, draft.streamingText, draft.liveSteps, atBottom]);
+
+  const onLogScroll = useCallback(() => {
+    const el = logRef.current;
+    if (!el) return;
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 48);
+  }, []);
 
   const send = useCallback(
     async (rawText?: string) => {
@@ -110,6 +120,7 @@ export function AskDrawer() {
         return;
       }
       setInput('');
+      setAtBottom(true);
       setNoteSaveError(null);
       let threadId = draft.threadId;
       if (threadId === null) {
@@ -310,8 +321,9 @@ export function AskDrawer() {
         </button>
         <button
           type="button"
-          className="ask-head-btn ask-new"
+          aria-label="New chat"
           title="New chat"
+          className="ask-head-btn"
           onClick={() => {
             setDraft(EMPTY);
             setView('chat');
@@ -319,7 +331,10 @@ export function AskDrawer() {
             setContextCleared(false);
           }}
         >
-          New
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
         </button>
         <button
           type="button"
@@ -339,23 +354,25 @@ export function AskDrawer() {
         <div className="ask-context">
           <span>About</span>
           {activeContext ? (
-            <span className="ask-chip">
-              {activeContext.label}
+            <span className="ask-chip" title={activeContext.label}>
+              <span className="ask-chip-label">{activeContext.label}</span>
               {navigated ? (
                 <button
                   type="button"
-                  className="ask-chip-x"
+                  className="ask-chip-switch"
+                  title="Ask about this page instead"
                   onClick={() => {
                     setThreadContext(ask.pageContext);
                     setContextCleared(false);
                   }}
                 >
-                  Switch to this page
+                  This page
                 </button>
               ) : (
                 <button
                   type="button"
                   aria-label="Ask about the whole app instead"
+                  title="Ask about the whole app instead"
                   className="ask-chip-x"
                   onClick={() => {
                     setContextCleared(true);
@@ -370,12 +387,13 @@ export function AskDrawer() {
               )}
             </span>
           ) : (
-            <span className="ask-chip">Whole app</span>
+            <span className="ask-chip"><span className="ask-chip-label">Whole app</span></span>
           )}
         </div>
       )}
 
-      <div role="log" aria-live="polite" className="ask-log" ref={logRef}>
+      <div className="ask-log-wrap">
+      <div role="log" aria-live="polite" className="ask-log" ref={logRef} onScroll={onLogScroll}>
         {view === 'list' ? (
           <ListPanel
             tab={tab}
@@ -431,6 +449,20 @@ export function AskDrawer() {
           />
         )}
       </div>
+      {draft.streaming && !atBottom && view === 'chat' && (
+        <button
+          type="button"
+          className="ask-jump"
+          onClick={() => {
+            const el = logRef.current;
+            el?.scrollTo({ top: el.scrollHeight });
+            setAtBottom(true);
+          }}
+        >
+          Jump to latest
+        </button>
+      )}
+      </div>
 
       {noteEdit && (
         <div className="ask-note-edit" role="dialog" aria-label="Save note">
@@ -446,14 +478,14 @@ export function AskDrawer() {
             {noteSaveError && <span className="ask-err">{noteSaveError}</span>}
             <button
               type="button"
-              className="ask-head-btn"
+              className="ask-btn"
               onClick={() => setNoteEdit(null)}
             >
               Cancel
             </button>
             <button
               type="button"
-              className="ask-send"
+              className="ask-send ask-send-sm"
               onClick={async () => {
                 try {
                   if (noteEdit.id) await updateNote(noteEdit.id, noteEdit.text);
@@ -483,10 +515,11 @@ export function AskDrawer() {
           <div className="ask-cap">{disabledReason}</div>
         ) : (
           <>
-            <div className="ask-input-row">
+            <div className="ask-input-box">
               <textarea
                 ref={inputRef}
                 aria-label="Your question"
+                aria-describedby="ask-hint"
                 rows={2}
                 placeholder={
                   activeContext?.record_ref ? 'Ask about this…' : 'Ask about this page…'
@@ -502,26 +535,39 @@ export function AskDrawer() {
                   }
                 }}
               />
-              {draft.streaming ? (
-                <button type="button" aria-label="Stop the answer" className="ask-stop" onClick={() => void stop()}>
-                  <span className="ask-stop-sq" />
-                  Stop
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  aria-label="Send"
-                  className="ask-send"
-                  disabled={!input.trim() || input.length > 2000}
-                  onClick={() => void send()}
-                >
-                  Send
-                </button>
-              )}
+              <div className="ask-input-bar">
+                <span className="ask-budget">{budgetText(status)}</span>
+                {draft.streaming ? (
+                  <button
+                    type="button"
+                    aria-label="Stop the answer"
+                    title="Stop the answer"
+                    className="ask-send ask-send-sm"
+                    onClick={() => void stop()}
+                  >
+                    <span className="ask-stop-sq" />
+                    Stop
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    aria-label="Send"
+                    title="Send (Enter)"
+                    className="ask-send ask-send-sm"
+                    disabled={!input.trim() || input.length > 2000}
+                    onClick={() => void send()}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <line x1="12" y1="19" x2="12" y2="5" />
+                      <polyline points="6 11 12 5 18 11" />
+                    </svg>
+                    Send
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="ask-hint">
-              <span>Read-only: it looks things up and never changes anything.</span>
-              <span>Enter to send · Shift+Enter new line</span>
+            <div id="ask-hint" className="ask-hint">
+              Read-only: it looks things up and never changes anything. Enter sends; Shift+Enter starts a new line.
             </div>
           </>
         )}
@@ -585,34 +631,52 @@ function Conversation({
                 ))}
               </div>
             )}
-            <div className="ask-footer">
-              {m.status === 'stopped' && <span>Stopped by you · </span>}
-              {m.status === 'failed' && <span className="ask-err">Failed · </span>}
-              {m.status === 'cap' && <span>{m.error}</span>}
-              {m.error && m.status === 'ok' && <span>{m.error} · </span>}
-              {(m.unverified_numbers?.length ?? 0) > 0 && (
-                <span className="ask-amber">
-                  {m.unverified_numbers!.length} number
-                  {m.unverified_numbers!.length === 1 ? '' : 's'} not found in the data
-                  {' · '}
-                </span>
-              )}
-              {m.model && <span>{m.model} · </span>}
-              {m.steps?.length ? <span>{m.steps.length} lookups · </span> : null}
-              {m.cost && <span>${Number(m.cost).toFixed(3)} · </span>}
-              <span>data as of {shortTime(m.created_at)}</span>
-              <span style={{ flex: 1 }} />
-              {m.status === 'ok' && m.id > 0 && (
-                <button type="button" className="ask-foot-link" onClick={() => onSaveNote(m)}>
-                  Save as note
-                </button>
-              )}
-              <button type="button" className="ask-foot-link" onClick={() => onCopy(m)}>
-                Copy
-              </button>
-              <Link to="/inspector" className="ask-foot-link">
-                Model calls
-              </Link>
+            <div className="ask-foot">
+              <div className="ask-foot-meta">
+                {(m.unverified_numbers?.length ?? 0) > 0 && (
+                  <span className="ask-amber">
+                    {m.unverified_numbers!.length} number
+                    {m.unverified_numbers!.length === 1 ? '' : 's'} not found in the data
+                    {': '}
+                  </span>
+                )}
+                {m.status === 'stopped' && <span>Stopped by you · </span>}
+                {m.status === 'failed' && <span className="ask-err">Failed · </span>}
+                {m.status === 'cap' && <span>{m.error}</span>}
+                {m.error && m.status === 'ok' && <span>{m.error} · </span>}
+                {m.model && <span>{m.model} · </span>}
+                {m.steps?.length ? <span>{m.steps.length} lookup{m.steps.length === 1 ? '' : 's'} · </span> : null}
+                {m.cost && <span>${Number(m.cost).toFixed(3)} · </span>}
+                <span>data as of {shortTime(m.created_at)}</span>
+              </div>
+              <div className="ask-foot-btns">
+                {m.status === 'ok' && m.id > 0 && (
+                  <button type="button" className="ask-btn" onClick={() => onSaveNote(m)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M6 3h12v18l-6-4-6 4z" />
+                    </svg>
+                    Save as note
+                  </button>
+                )}
+                {m.text ? (
+                  <button type="button" className="ask-btn" onClick={() => onCopy(m)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <rect x="9" y="9" width="11" height="11" rx="2" />
+                      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+                    </svg>
+                    Copy
+                  </button>
+                ) : null}
+                {m.status === 'ok' && (
+                  <Link to="/inspector?source=ask" className="ask-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <circle cx="11" cy="11" r="6" />
+                      <line x1="16" y1="16" x2="21" y2="21" />
+                    </svg>
+                    Model calls
+                  </Link>
+                )}
+              </div>
             </div>
           </div>
         ),
@@ -742,18 +806,27 @@ function ListPanel({
                   ))}
                 </div>
               )}
-              <div className="ask-footer">
-                <span>
+              <div className="ask-foot">
+                <div className="ask-foot-meta">
                   {shortDate(n.created_at)} ·{' '}
                   {n.source_chat ? `from “${n.source_chat}”` : 'written by you'}
-                </span>
-                <span style={{ flex: 1 }} />
-                <button type="button" className="ask-foot-link" onClick={() => onEditNote(n)}>
-                  Edit
-                </button>
-                <button type="button" className="ask-foot-link ask-del" onClick={() => void onDeleteNote(n.id)}>
-                  Delete
-                </button>
+                </div>
+                <div className="ask-foot-btns">
+                  <button type="button" className="ask-btn" onClick={() => onEditNote(n)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M4 20h4L19 9l-4-4L4 16z" />
+                    </svg>
+                    Edit
+                  </button>
+                  <button type="button" className="ask-btn ask-btn-danger" onClick={() => void onDeleteNote(n.id)}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <polyline points="4 7 20 7" />
+                      <path d="M6 7l1 13h10l1-13" />
+                      <path d="M9 7V4h6v3" />
+                    </svg>
+                    Delete
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -792,13 +865,25 @@ function ThreadRow({
       <button
         type="button"
         aria-label={`Delete ${t.title}`}
-        className="ask-head-btn"
+        className="ask-head-btn ask-head-btn-sm"
         onClick={() => void onDelete(t.id)}
       >
         ×
       </button>
     </div>
   );
+}
+
+/** "$13.16 of $15 left this month" — the composer's budget readout
+ * (design/screens/AskDrawer.dc.html). Empty while status is unknown. */
+function budgetText(status: AskStatus | null): string {
+  if (!status || status.cap_usd == null || status.spent_usd == null) return '';
+  const cap = Number(status.cap_usd);
+  const spent = Number(status.spent_usd);
+  if (!Number.isFinite(cap) || !Number.isFinite(spent)) return '';
+  const left = Math.max(0, cap - spent);
+  const capStr = Number.isInteger(cap) ? `$${cap}` : `$${cap.toFixed(2)}`;
+  return `$${left.toFixed(2)} of ${capStr} left this month`;
 }
 
 function shortTime(iso: string): string {

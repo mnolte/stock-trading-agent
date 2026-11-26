@@ -44,6 +44,8 @@ import type {
   UniverseAddResult,
   UniverseImportResult,
   UniverseResponse,
+  UniverseSyncResponse,
+  UniverseSyncRetryResult,
   VerdictResolved,
   VerdictsResponse,
   VerdictValue,
@@ -76,6 +78,10 @@ export function getDecision(
 
 export function getBanners(signal?: AbortSignal): Promise<BannersResponse> {
   return get<BannersResponse>('/api/banners', signal);
+}
+
+export function postUseConfig(key: string, reason: string): Promise<SaveSettingsResult> {
+  return post<SaveSettingsResult>('/api/settings/use-config', { key, reason });
 }
 
 export function getAttention(signal?: AbortSignal): Promise<AttentionResponse> {
@@ -304,6 +310,21 @@ export function postUniverseRemove(
 
 export function postUniverseScreen(): Promise<Record<string, unknown>> {
   return post<Record<string, unknown>>('/api/universe/screen', {});
+}
+
+export function getUniverseSync(
+  signal?: AbortSignal,
+): Promise<UniverseSyncResponse> {
+  return get<UniverseSyncResponse>('/api/universe/sync', signal);
+}
+
+export function postUniverseSyncRetry(
+  job: string,
+): Promise<UniverseSyncRetryResult> {
+  return post<UniverseSyncRetryResult>(
+    `/api/universe/sync/${encodeURIComponent(job)}/retry`,
+    {},
+  );
 }
 
 export function getStrategies(signal?: AbortSignal): Promise<StrategiesResponse> {

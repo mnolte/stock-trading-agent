@@ -161,9 +161,232 @@ def briefing_status(facts: dict[str, Any]) -> str:
     )
 
 
+def _version_number(version: str) -> int:
+    """"weekly.v3" → 3; unknown shapes → 0."""
+    try:
+        return int(str(version).rsplit(".", 1)[-1].lstrip("v"))
+    except ValueError:
+        return 0
+
+
+def _story_version(kind: str, version: str | None) -> bool:
+    """v3+ prompts get the one-to-three-paragraph story (item 079)."""
+    return version is not None and _version_number(version) >= 3
+
+
+def weekly_story_plain(facts: dict[str, Any]) -> dict[str, Any]:
+    """{story, suggestion} for the weekly.v3 template (item 079): one
+    fixed sentence per fact group, in the prompt's paragraph order —
+    the week, what drove it, then the sample so far."""
+    period = facts.get("period") or {}
+    week = (
+        f"Week {period.get('week')} ({period.get('label', '')})"
+        if period.get("week") is not None
+        else "This week"
+    )
+
+    # ---- paragraph 1: the week -------------------------------------------------
+    para1: list[str] = []
+    ret = facts.get("return_pct")
+    if ret is None:
+        para1.append(
+            f"{week}: no equity snapshots, so there is no return figure."
+        )
+    else:
+        spy = facts.get("spy_return_pct")
+        vs = facts.get("vs_spy_pts")
+        spy_bit = (
+            f", against SPY {_fmt_pct(spy)}"
+            + (f" ({_fmt_signed(vs)} pts vs SPY)" if vs is not None else "")
+            if spy is not None
+            else ""
+        )
+        dd = facts.get("max_drawdown_pct")
+        dd_bit = f" The deepest dip was {_fmt_pct(dd)}." if dd is not None else ""
+        para1.append(
+            f"{week} closed with the account {_fmt_pct(ret)}"
+            f"{_fmt_usd_signed(facts.get('return_usd'))}{spy_bit}.{dd_bit}"
+        )
+
+    # ---- paragraph 2: what drove it --------------------------------------------
+    para2: list[str] = []
+    closed = facts.get("trades_closed") or 0
+    if closed:
+        para2.append(
+            f"{closed} trade{'s' if closed != 1 else ''} closed: "
+            f"{facts.get('won', 0)} won, {facts.get('lost', 0)} lost, "
+            f"averaging {_fmt_signed(facts.get('avg_r'))}R per trade."
+        )
+        best = facts.get("best_trade")
+        worst = facts.get("worst_trade")
+        if best is not None and worst is not None:
+            para2.append(
+                f"The best was {best['symbol']} "
+                f"{_fmt_signed(best.get('r'))}R ({best.get('exit')}); "
+                f"the worst {worst['symbol']} "
+                f"{_fmt_signed(worst.get('r'))}R ({worst.get('exit')})."
+            )
+    else:
+        para2.append("No trades closed this week.")
+    skips = facts.get("skips") or {}
+    if skips.get("total"):
+        n = (facts.get("limits") or {}).get("verdict_after_sessions", 5)
+        line = (
+            f"Of {skips['total']} model skips, "
+            f"{skips.get('with_outcome', 0)} have a {n}-session result: "
+            f"{skips.get('up', 0)} up, {skips.get('flat', 0)} flat, "
+            f"{skips.get('down', 0)} down."
+        )
+        miss = skips.get("biggest_miss")
+        if miss is not None:
+            line += (
+                f" The biggest miss was {miss['symbol']}, skipped "
+                f"{_day_words(miss.get('date'))}, then up "
+                f"{miss.get('pct')}%."
+            )
+        para2.append(line)
+
+    # ---- paragraph 3: the sample so far -----------------------------------------
+    sample = facts.get("sample") or {}
+    closed_run = (sample.get("closed_trades") or {}).get("run")
+    skips_run = (sample.get("model_skips_with_outcome") or {}).get("run")
+    verdicts = facts.get("verdicts") or {}
+    para3_bits: list[str] = []
+    if closed_run is not None:
+        para3_bits.append(
+            f"{closed_run} closed trade{'s' if closed_run != 1 else ''} "
+            "in the run so far"
+        )
+    if skips_run:
+        para3_bits.append(f"{skips_run} scored model skips")
+    if verdicts.get("total"):
+        para3_bits.append(
+            f"{verdicts['total']} confirmed verdict"
+            f"{'s' if verdicts['total'] != 1 else ''} "
+            f"({verdicts.get('good_call', 0)} good, "
+            f"{verdicts.get('bad_call', 0)} bad, "
+            f"{verdicts.get('unclear', 0)} unclear)"
+        )
+    para3 = (
+        "So far: " + ", ".join(para3_bits) + ". That is still a small "
+        "sample — one trade can swing it either way."
+        if para3_bits
+        else "No closed trades or confirmed verdicts yet — the sample is "
+        "still empty, so nothing here is proof either way."
+    )
+
+    return {
+        "story": "\n\n".join([" ".join(para1), " ".join(para2), para3]),
+        "suggestion": None,
+    }
+
+
+def briefing_story_plain(facts: dict[str, Any]) -> dict[str, Any]:
+    """{text} for the briefing.v3 template (item 079): account, market,
+    what to watch — the prompt's paragraph order, one sentence per fact
+    group, code-written like the v1/v2 status line but as prose."""
+    # ---- paragraph 1: the account ----------------------------------------------
+    pos = facts.get("positions")
+    para1: list[str] = []
+    if isinstance(pos, list):
+        if not pos:
+            para1.append("The account is flat today — no positions are open.")
+        else:
+            for p in pos:
+                dist = p.get("stop_distance_pct")
+                price = p.get("price")
+                if price is None:
+                    para1.append(
+                        f"{p.get('symbol')} has {p.get('qty')} shares open; "
+                        "no fresh price for the stop distance."
+                    )
+                    continue
+                stop_bit = (
+                    f"its stop sits {float(dist):.1f}% below the last price"
+                    if dist is not None
+                    else "the stop distance is unavailable"
+                )
+                para1.append(
+                    f"{p.get('symbol')} has {p.get('qty')} shares open at "
+                    f"${float(price):,.2f}, and {stop_bit}."
+                )
+    yesterday = facts.get("yesterday") or {}
+    y_pct = yesterday.get("return_pct")
+    if y_pct is not None:
+        spy = yesterday.get("spy_return_pct")
+        spy_bit = (
+            f" SPY moved {_fmt_pct(spy)} over the same day."
+            if spy is not None
+            else ""
+        )
+        para1.append(
+            f"Yesterday the account {_fmt_pct(y_pct)} "
+            f"({_fmt_usd_signed(yesterday.get('return_usd'))}).{spy_bit}"
+        )
+
+    # ---- paragraph 2: the market ------------------------------------------------
+    para2: list[str] = []
+    regime = facts.get("regime")
+    if regime and regime != "unavailable":
+        para2.append(f"The market regime reads {regime}.")
+    vix = facts.get("vix")
+    if isinstance(vix, dict) and vix.get("close") is not None:
+        pct = vix.get("percentile_1y")
+        stale = " and the reading is stale" if vix.get("stale") else ""
+        pct_bit = (
+            f", its {_ordinal(float(pct))} percentile of the past year,"
+            if pct is not None
+            else ","
+        )
+        para2.append(
+            f"VIX closed at {float(vix['close']):g}{pct_bit}{stale}."
+        )
+    release = facts.get("next_release")
+    if isinstance(release, dict) and release.get("label"):
+        when = _day_words(release.get("date"))
+        para2.append(
+            f"The next scheduled release is {release['label']} on "
+            f"{when} at {release.get('time', '')} New York time."
+        )
+
+    # ---- paragraph 3: what to watch ------------------------------------------------
+    para3: list[str] = []
+    today = [e["symbol"] for e in facts.get("earnings_today") or [] if e.get("symbol")]
+    tomorrow = [
+        e["symbol"] for e in facts.get("earnings_tomorrow") or [] if e.get("symbol")
+    ]
+    if today or tomorrow:
+        bits = []
+        if today:
+            bits.append(f"{', '.join(today)} reports today")
+        if tomorrow:
+            bits.append(f"{', '.join(tomorrow)} reports tomorrow")
+        para3.append("Earnings to watch: " + "; ".join(bits) + ".")
+    banners = facts.get("banners") or []
+    if banners:
+        para3.append(
+            "Banners up: "
+            + ", ".join(str(b.get("kind", "")).replace("_", " ") for b in banners)
+            + "."
+        )
+    if not para3:
+        para3.append("Nothing on the earnings calendar and no banners today.")
+
+    return {"text": "\n\n".join([" ".join(p) for p in (para1, para2, para3) if p])}
+
+
 def briefing_plain(facts: dict[str, Any]) -> dict[str, Any]:
     """{text} for the daily briefing template."""
     return {"text": briefing_status(facts)}
+
+
+def _ordinal(value: float) -> str:
+    """42.0 → "42nd" for the VIX percentile sentence."""
+    n = int(value)
+    suffix = (
+        "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    )
+    return f"{n}{suffix}"
 
 
 def _fmt_usd_signed(value: object) -> str:
@@ -350,10 +573,18 @@ def verdict_plain(facts: dict[str, Any]) -> dict[str, Any]:
     return {"verdict": "unclear", "reason": "No model call to judge."}
 
 
-def plain_content(kind: str, facts: dict[str, Any]) -> dict[str, Any]:
-    """The fallback content block for one review kind."""
+def plain_content(
+    kind: str, facts: dict[str, Any], version: str | None = None
+) -> dict[str, Any]:
+    """The fallback content block for one review kind. ``version`` is the
+    prompt that was about to run — v3+ gets the story shape (item 079);
+    older versions keep theirs."""
     if kind == "briefing":
+        if _story_version(kind, version):
+            return briefing_story_plain(facts)
         return briefing_plain(facts)
     if kind == "verdict":
         return verdict_plain(facts)
+    if _story_version(kind, version):
+        return weekly_story_plain(facts)
     return weekly_plain(facts)

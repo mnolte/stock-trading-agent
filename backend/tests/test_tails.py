@@ -9,9 +9,10 @@ after-exit window and a symbol whose bars are fetched through the
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from app.config import AppConfig
@@ -505,6 +506,81 @@ def test_split_factor_after_helper() -> None:
     ]
     assert split_factor_after(actions, "AAA", date(2026, 10, 8)) == Decimal("2")
     assert split_factor_after(actions, "AAA", date(2026, 10, 9)) == Decimal("1")
+
+
+# ----------------------------------------------------------------------
+# Event-loop regression: fill()'s SQLite work must stay off the loop
+
+
+def _off_loop_probe(
+    session_factory: sessionmaker[Session],
+) -> tuple[sessionmaker[Session], list[int]]:
+    """A sessionmaker on the same engine recording each session's thread."""
+    threads: list[int] = []
+
+    class ProbeSession(Session):
+        def __init__(self, **kw: Any) -> None:
+            super().__init__(**kw)
+            threads.append(threading.get_ident())
+
+    engine = session_factory.kw["bind"]
+    probe = sessionmaker(
+        class_=ProbeSession, bind=engine, autoflush=False, autocommit=False
+    )
+    return cast(sessionmaker[Session], probe), threads
+
+
+def _assert_off_loop(threads: list[int]) -> None:
+    """Every session fill() opened ran on a worker thread, never the
+    event loop's — a stalled database must not freeze the app."""
+    assert threads, "fill() opened no sessions — probe saw nothing"
+    loop_thread = threading.get_ident()
+    assert all(
+        t != loop_thread for t in threads
+    ), f"sessions opened on loop thread {loop_thread}: {threads}"
+
+
+async def test_fill_sqlite_stays_off_the_event_loop(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Cached-bars path: due read, cache reads and the result write."""
+    exit_at = datetime(2026, 10, 6, 18, 0, tzinfo=UTC)
+    now = datetime(2026, 10, 13, 21, 0, tzinfo=UTC)
+    clock = FakeClock(now)
+    probe, threads = _off_loop_probe(session_factory)
+    worker, market_data, _ = _worker(probe, clock)
+    with session_factory() as session:
+        _closed_position(session, closed=exit_at.replace(tzinfo=None))
+        session.commit()
+    await market_data.refresh_bars(datetime(2026, 10, 5, tzinfo=UTC), now)
+    threads.clear()
+    report = await worker.fill(now)
+    assert report.filled == 1
+    _assert_off_loop(threads)
+
+
+async def test_fill_fetch_and_failure_sqlite_off_the_event_loop(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Fetch path: uncached symbol — first fetch fails (failure write),
+    second succeeds (bar-store write + merge)."""
+    exit_at = datetime(2026, 10, 6, 18, 0, tzinfo=UTC)
+    bars = _FailingBars(FakeCalendarSource(), fail=1)
+    clock = FakeClock(datetime(2026, 10, 13, 21, 0, tzinfo=UTC))
+    probe, threads = _off_loop_probe(session_factory)
+    worker, _market_data, _ = _worker(probe, clock, bars=bars)
+    with session_factory() as session:
+        _closed_position(
+            session, closed=exit_at.replace(tzinfo=None), symbol="ZZZ"
+        )
+        session.commit()
+    threads.clear()
+    first = await worker.fill(datetime(2026, 10, 13, 21, 0, tzinfo=UTC))
+    assert first.failed == 1
+    bars.fail_remaining = 0
+    second = await worker.fill(datetime(2026, 10, 14, 21, 0, tzinfo=UTC))
+    assert second.filled == 1
+    _assert_off_loop(threads)
 
 
 # ----------------------------------------------------------------------

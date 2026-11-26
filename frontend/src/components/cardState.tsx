@@ -235,7 +235,7 @@ export function CardBody<T>({
       {isEmpty && isEmpty(res.data) ? (
         empty
       ) : (
-        <div className={rowClass || undefined}>{children(res.data)}</div>
+        <div className={['sa-cardbody', rowClass].filter(Boolean).join(' ')}>{children(res.data)}</div>
       )}
     </>
   );

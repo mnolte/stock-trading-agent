@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import csv
 import io
 import sqlite3
 import threading
@@ -27,6 +26,7 @@ from app.backtests.estimate import (
 from app.backtests.manager import BacktestManager, store_usage
 from app.backtests.store import run_dir_for
 from app.config import get_config
+from app.csv_safe import writer as csv_writer
 from app.db.base import get_session_maker
 from app.db.models import Backtest, Cycle, Decision, Outcome, Position, Strategy
 from app.decide.client import priced_models
@@ -359,6 +359,8 @@ def list_runs(request: Request) -> dict[str, Any]:
         rows = session.execute(
             select(Backtest).order_by(Backtest.id.desc())
         ).scalars().all()
+        for r in rows:
+            _ensure_answer(session, r)
         items = [_row_json(r) for r in rows]
         strategies = session.execute(
             select(Strategy).where(Strategy.status != "archived")
@@ -411,6 +413,23 @@ def list_runs(request: Request) -> dict[str, Any]:
     }
 
 
+def _ensure_answer(session: Session, row: Backtest) -> None:
+    """Backfill the stored answer sentence for runs that finished before
+    it existed: computed once on first read, then stored."""
+    if row.status != "done" or not row.summary or row.summary.get("answer"):
+        return
+    from app.backtests.answers import answer_sentence
+
+    answer = answer_sentence(
+        row.strategies,
+        {k: v for k, v in row.summary.items() if k != "answer"},
+        row.starting_equity,
+    )
+    if answer is not None:
+        row.summary = {**row.summary, "answer": answer}
+        session.commit()
+
+
 def _row_json(row: Backtest) -> dict[str, Any]:
     return {
         "id": row.id,
@@ -442,6 +461,7 @@ def run_detail(request: Request, run_id: int) -> dict[str, Any]:
         row = session.get(Backtest, run_id)
         if row is None:
             raise HTTPException(404, "run not found")
+        _ensure_answer(session, row)
         payload = _row_json(row)
     _manager(request).tick()
     return payload
@@ -521,9 +541,16 @@ def _strategy_sf(request: Request, run_id: int, slug: str) -> sessionmaker[Sessi
         row = session.get(Backtest, run_id)
         if row is None:
             raise HTTPException(404, "run not found")
-        if not any(s["slug"] == slug for s in row.strategies):
+        stored_slug = next(
+            (s["slug"] for s in row.strategies if s["slug"] == slug), None
+        )
+        if stored_slug is None:
             raise HTTPException(404, "strategy not in run")
-    path = run_dir_for(get_config(), run_id) / f"{slug}.db"
+        run_row_id = row.id
+    # The path is built from stored values only — the request's run_id and
+    # slug are used in lookups, never in a path expression (hard rule 19,
+    # CodeQL py/path-injection).
+    path = run_dir_for(get_config(), run_row_id) / f"{stored_slug}.db"
     if not path.exists():
         raise HTTPException(404, "strategy database not found")
     _migrate_strategy_db_if_behind(path)
@@ -768,7 +795,7 @@ def export_csv(
         get_config().get("security", "export_max_rows", default=100000)
     )
     buf = io.StringIO()
-    writer = csv.writer(buf)
+    writer = csv_writer(buf)
     capped = False
     with sf() as session:
         if kind == "decisions":

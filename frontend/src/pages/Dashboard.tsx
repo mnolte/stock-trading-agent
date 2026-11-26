@@ -18,6 +18,7 @@ import type {
   DashboardLatestDecision,
   DashboardResponse,
   MarketClosedCard,
+  PositionRow,
   PositionsResponse,
 } from '../types/api';
 import { ApprovalCard } from '../components/ApprovalCard';
@@ -37,6 +38,7 @@ import { StatCard } from '../components/StatCard';
 import { Watchlist } from '../components/Watchlist';
 import {
   SkeletonChart,
+  SkeletonDecision,
   SkeletonList,
   SkeletonText,
   SkeletonTile,
@@ -49,7 +51,10 @@ import {
   displayWeekdayDateTime,
   displayWeekdayTime,
   elapsedHm,
+  fmtDayMonthIn,
   fmtWeekdayDayShort,
+  formatDuration,
+  joinParts,
   nyTime,
   sessionDayLabel,
   sessionDayShort,
@@ -57,10 +62,13 @@ import {
   signedPct,
   signedUsd,
 } from '../format';
+import { CycleValues } from '../components/cycleLine';
+import { cycleSentenceParts } from '../components/cycleLineFormat';
 import {
   actionBadgeStyle,
   formatAmsTime,
   formatNyTitle,
+  noCallLine,
 } from '../components/decisionFormat';
 import { earningsChipLabel } from './decisionDetail';
 import {
@@ -87,11 +95,11 @@ function FeedRowLink({ row }: { row: FeedRow }) {
     <Link
       to={to}
       state={single ? { backgroundLocation: location } : undefined}
-      className="sa-row"
+      className="sa-row sa-feed-row"
       style={{
         display: 'grid',
         gridTemplateColumns: '108px minmax(0, 1fr) auto',
-        gap: 'var(--sa-space-3)',
+        gap: '10px',
         alignItems: 'center',
         minHeight: 'var(--sa-control-height)',
         padding: '6px 8px',
@@ -158,7 +166,7 @@ function CycleGroup({
           display: 'flex',
           width: '100%',
           alignItems: 'baseline',
-          gap: 'var(--sa-space-3)',
+          gap: '10px',
           minHeight: '40px',
           padding: 'var(--sa-space-2) 0 var(--sa-space-1)',
           border: 0,
@@ -207,15 +215,17 @@ function Feed({ res }: { res: Resource<DashboardResponse> }) {
   const title =
     sess && !sess.shown_is_today
       ? `${sessionDayLabel(sess.shown_date)} · last session`
-      : "Today's decisions";
+      : 'Today’s decisions';
 
   return (
     <Card
+      id="today"
       label={title}
+      ariaLabel={title}
       right={<Link to="/inspector">All model calls</Link>}
       busy={res.loading}
       refreshing={res.refreshing}
-      style={{ flex: 1 }}
+      style={{ flex: 1, gap: '14px', scrollMarginTop: 16 }}
     >
       <CardBody
         res={res}
@@ -274,7 +284,7 @@ function toneStyle(tone: number): React.CSSProperties {
         ? 'var(--sa-positive-bg)'
         : tone < 0
           ? 'var(--sa-negative-bg)'
-          : 'var(--sa-raised)',
+          : 'var(--sa-subtle)',
     color:
       tone > 0
         ? 'var(--sa-positive)'
@@ -284,35 +294,89 @@ function toneStyle(tone: number): React.CSSProperties {
   };
 }
 
+const GROUP_LABEL: React.CSSProperties = {
+  fontSize: 'var(--sa-text-xs)',
+  fontWeight: 600,
+  color: 'var(--sa-text-muted)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.08em',
+};
+
+/** "MSFT · 18:46 cycle · 12:46 NY · gpt-4.1-mini · decision.v6" — a
+ * no_call says "no model call" instead of the model (item 073). */
+function decisionMeta(d: DashboardLatestDecision): string {
+  const noCall = d.final_action === 'no_call';
+  const called = !noCall && d.model !== null && d.model !== 'none';
+  return joinParts(
+    d.symbol,
+    `${displayTime(d.time)} cycle`,
+    `${nyTime(d.time)} NY`,
+    called ? joinParts(d.model, d.prompt_version ?? undefined) : 'no model call',
+  );
+}
+
 function LatestDecision({ res }: { res: Resource<DashboardResponse> }) {
+  const location = useLocation();
   const d = res.data?.latest_decision ?? null;
   // Off-session fallback (design/screens/States.dc.html): the card shows
   // the most recent decision for the symbol, with its date.
   const compact = d !== null && !d.in_session;
+  const title = compact && d !== null ? `Latest decision · ${d.symbol}` : 'Latest decision';
   return (
     <Card
-      label={compact ? `Latest decision · ${d.symbol}` : 'Latest decision'}
+      id="decision"
+      ariaLabel="Latest decision"
       busy={res.loading}
       refreshing={res.refreshing}
-      right={
-        d && (
-          <span
-            title={formatNyTitle(d.time)}
+      style={{ padding: '20px', gap: '16px', scrollMarginTop: 16 }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: '8px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <h2
             style={{
-              fontFamily: 'var(--sa-font-mono)',
-              fontSize: 'var(--sa-text-sm)',
-              color: 'var(--sa-text-muted)',
+              margin: 0,
+              fontSize: 'var(--sa-text-md)',
+              fontWeight: 600,
+              color: 'var(--sa-text-2)',
+              textTransform: 'uppercase',
+              letterSpacing: 'var(--sa-label-tracking)',
             }}
           >
-            {displayTime(d.time)} · {d.model ?? '—'}
+            {title}
+          </h2>
+          {d ? (
+            <Link
+              to={`/decisions/${d.id}`}
+              state={{ backgroundLocation: location }}
+              style={{ fontSize: 'var(--sa-text-md)', whiteSpace: 'nowrap' }}
+            >
+              Open full decision →
+            </Link>
+          ) : (
+            // Keeps the header's right edge stable while loading.
+            <span style={{ visibility: 'hidden', fontSize: 'var(--sa-text-md)' }}>
+              Open full decision →
+            </span>
+          )}
+        </div>
+        {d !== null && !compact && (
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            {decisionMeta(d)}
           </span>
-        )
-      }
-    >
+        )}
+      </div>
       <CardBody
         res={res}
         what="the latest decision"
-        skeleton={<SkeletonText lines={4} />}
+        skeleton={<SkeletonDecision />}
         isEmpty={(data) => data.latest_decision === null}
         empty={
           <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
@@ -334,53 +398,31 @@ function LatestDecision({ res }: { res: Resource<DashboardResponse> }) {
 
 /** Compact off-session card: "HOLD · Fri 23 Oct 21:46 · trend intact". */
 function LatestDecisionCompact({ d }: { d: DashboardLatestDecision }) {
-  const location = useLocation();
   const chip = actionText(d.final_action);
   const badge = actionBadgeStyle(d.final_action);
   return (
-    <>
-      <div
+    <div
+      style={{
+        fontSize: 'var(--sa-text-md)',
+        color: 'var(--sa-text-2)',
+        lineHeight: 1.55,
+      }}
+    >
+      <b
         style={{
-          fontSize: 'var(--sa-text-md)',
-          color: 'var(--sa-text-2)',
-          lineHeight: 1.55,
+          fontFamily: 'var(--sa-font-mono)',
+          fontWeight: 600,
+          color: badge.color,
         }}
       >
-        <b
-          style={{
-            fontFamily: 'var(--sa-font-mono)',
-            fontWeight: 600,
-            color: badge.color,
-          }}
-        >
-          {chip.label}
-        </b>
-        {' · '}
-        <span title={formatNyTitle(d.time)}>
-          {displayWeekdayDateTime(d.time)}
-        </span>
-        {d.why ? ` · ${d.why}` : ''}
-      </div>
-      <Link
-        to={`/decisions/${d.id}`}
-        state={{ backgroundLocation: location }}
-        style={{
-          height: '44px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: 'var(--sa-radius-md)',
-          border: '1px solid var(--sa-border-strong)',
-          background: 'var(--sa-raised)',
-          color: 'var(--sa-text)',
-          textDecoration: 'none',
-          fontWeight: 500,
-          marginTop: 'auto',
-        }}
-      >
-        Open full decision
-      </Link>
-    </>
+        {chip.label}
+      </b>
+      {' · '}
+      <span title={formatNyTitle(d.time)}>
+        {displayWeekdayDateTime(d.time)}
+      </span>
+      {d.why ? ` · ${d.why}` : ''}
+    </div>
   );
 }
 
@@ -388,15 +430,22 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
   const location = useLocation();
   const chip = actionText(d.final_action);
   const badge = actionBadgeStyle(d.final_action);
+  const noCall = d.final_action === 'no_call';
   const regimeVariant: 'positive' | 'negative' | 'neutral' =
     d.regime?.trend === 'up'
       ? 'positive'
       : d.regime?.trend === 'down'
         ? 'negative'
         : 'neutral';
+  const sub = noCall
+    ? noCallLine(d)
+    : joinParts(
+        `confidence ${d.confidence !== null && d.confidence !== undefined ? d.confidence.toFixed(2) : '—'}`,
+        d.chosen_option ? `option ${d.chosen_option}` : null,
+      );
   return (
-    <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sa-space-3)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
         <div
           style={{
             minWidth: '88px',
@@ -416,110 +465,166 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
         >
           {chip.label}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
           <span style={{ fontWeight: 600, fontSize: 'var(--sa-text-lg)' }}>{d.symbol}</span>
-          <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-            confidence{' '}
-            <span style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-2)' }}>
-              {d.confidence !== null ? d.confidence.toFixed(2) : '—'}
-            </span>
-            {d.chosen_option && (
-              <span style={{ color: 'var(--sa-accent)' }}> · option {d.chosen_option}</span>
-            )}
+          <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.4 }}>
+            {sub}
           </span>
         </div>
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-        {d.regime && (
-          <span title="SPY regime: trend × volatility">
-            <Chip variant={regimeVariant}>
-              market {d.regime.trend} · {d.regime.volatility} vol
-            </Chip>
-          </span>
-        )}
-        {d.vix && vixChipLabel(d.vix) !== null && (
-          <span title={vixCardTitle(d.vix)}>
-            <Chip variant={d.vix.stale ? 'warning' : 'neutral'}>{vixChipLabel(d.vix)}</Chip>
-          </span>
-        )}
-        <Chip variant="neutral">{earningsChipLabel(d.earnings)}</Chip>
-      </div>
-      {d.why && (
-        <p style={{ margin: 0, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.55 }}>
-          {d.why}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <span style={GROUP_LABEL}>Why</span>
+        <p
+          style={{
+            margin: 0,
+            color: 'var(--sa-text-2)',
+            lineHeight: 1.55,
+            display: '-webkit-box',
+            WebkitLineClamp: 4,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+          }}
+        >
+          {d.why ?? '—'}
         </p>
-      )}
-      {d.sig.length > 0 && (
+        <Link
+          to={`/decisions/${d.id}`}
+          state={{ backgroundLocation: location }}
+          style={{ alignSelf: 'flex-start', fontSize: 'var(--sa-text-md)' }}
+        >
+          more
+        </Link>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <span style={GROUP_LABEL}>Context</span>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-          {d.sig.map((s, i) => (
-            <span key={i} style={toneStyle(s.tone)}>
-              {s.text}
+          {d.regime && (
+            <span title="SPY regime: trend × volatility">
+              <Chip variant={regimeVariant}>
+                market {d.regime.trend} · {d.regime.volatility} vol
+              </Chip>
             </span>
+          )}
+          {d.vix && vixChipLabel(d.vix) !== null && (
+            <span title={vixCardTitle(d.vix)}>
+              <Chip variant={d.vix.stale ? 'warning' : 'neutral'}>{vixChipLabel(d.vix)}</Chip>
+            </span>
+          )}
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              height: '24px',
+              padding: '0 8px',
+              borderRadius: 'var(--sa-radius-sm)',
+              fontFamily: 'var(--sa-font-mono)',
+              fontSize: 'var(--sa-text-sm)',
+              whiteSpace: 'nowrap',
+              background: 'var(--sa-subtle)',
+              color: 'var(--sa-text-2)',
+              border: '1px solid var(--sa-border-strong)',
+            }}
+          >
+            {earningsChipLabel(d.earnings)}
+          </span>
+          {(d.release_next_morning ?? []).map((rel, i) => (
+            <Chip key={`${rel.type}-${rel.date}-${i}`} variant="warning">
+              {rel.label ?? rel.type.toUpperCase()} {fmtWeekdayDayShort(rel.date)}
+            </Chip>
           ))}
+        </div>
+      </div>
+      {d.sig.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <span style={GROUP_LABEL}>Signals</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+            {d.sig.map((s, i) => (
+              <span key={i} style={toneStyle(s.tone)}>
+                {s.text}
+              </span>
+            ))}
+          </div>
         </div>
       )}
       {d.box.length > 0 && (
-        <div
-          style={{
-            border: '1px solid var(--sa-border)',
-            borderRadius: 'var(--sa-radius-md)',
-            padding: '4px var(--sa-space-3)',
-          }}
-        >
-          {d.box.map((row, i) => (
-            <div
-              key={i}
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                gap: 'var(--sa-space-3)',
-                padding: '7px 0',
-                fontSize: 'var(--sa-text-md)',
-                borderBottom:
-                  i < d.box.length - 1 ? '1px solid var(--sa-border)' : 'none',
-              }}
-            >
-              <span style={{ color: 'var(--sa-text-2)' }}>{row.label}</span>
-              <span
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <span style={GROUP_LABEL}>Key facts</span>
+          <div
+            style={{
+              border: '1px solid var(--sa-border)',
+              borderRadius: 'var(--sa-radius-md)',
+              padding: '2px var(--sa-space-3)',
+            }}
+          >
+            {d.box.slice(0, 3).map((row, i, rows) => (
+              <div
+                key={i}
                 style={{
-                  fontFamily: 'var(--sa-font-mono)',
-                  fontSize: 'var(--sa-text-sm)',
-                  textAlign: 'right',
-                  color:
-                    row.tone > 0
-                      ? 'var(--sa-positive)'
-                      : row.tone < 0
-                        ? 'var(--sa-negative-text)'
-                        : 'var(--sa-text-2)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 'var(--sa-space-3)',
+                  padding: '8px 0',
+                  fontSize: 'var(--sa-text-md)',
+                  borderBottom:
+                    i < rows.length - 1 ? '1px solid var(--sa-subtle)' : 'none',
                 }}
               >
-                {row.value}
-              </span>
-            </div>
-          ))}
+                <span style={{ color: 'var(--sa-text-2)' }}>{row.label}</span>
+                <span
+                  style={{
+                    fontFamily: 'var(--sa-font-mono)',
+                    fontSize: 'var(--sa-text-sm)',
+                    textAlign: 'right',
+                    color:
+                      row.tone > 0
+                        ? 'var(--sa-positive)'
+                        : row.tone < 0
+                          ? 'var(--sa-negative-text)'
+                          : 'var(--sa-text-2)',
+                  }}
+                >
+                  {row.value}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
-      <Link
-        to={`/decisions/${d.id}`}
-        state={{ backgroundLocation: location }}
-        style={{
-          height: '44px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderRadius: 'var(--sa-radius-md)',
-          border: '1px solid var(--sa-border-strong)',
-          background: 'var(--sa-raised)',
-          color: 'var(--sa-text)',
-          textDecoration: 'none',
-          fontWeight: 500,
-          marginTop: 'auto',
-        }}
-      >
-        Open full decision
-      </Link>
-    </>
+    </div>
   );
+}
+
+/** " Both have a stop and target at Alpaca; MSFT earnings exit on 27 Oct."
+ * — the design's second footnote sentence (Main.dc.html), emitted only
+ * for what is true of the open positions. */
+function brokerFootnote(open: PositionRow[]): string {
+  if (open.length === 0) return '';
+  const guarded = open.filter(
+    (p) =>
+      p.current_stop_price !== null &&
+      p.target_price !== null &&
+      !p.stop_missing,
+  );
+  const exits = open
+    .map((p) => {
+      const m = p.scheduled_exit?.match(/^earnings exit (\d{4}-\d{2}-\d{2})$/);
+      if (!m) return null;
+      const day = fmtDayMonthIn(m[1]);
+      return day ? `${p.symbol} earnings exit on ${day}` : null;
+    })
+    .filter((s): s is string => s !== null);
+  const clauses: string[] = [];
+  if (guarded.length === open.length) {
+    clauses.push(
+      open.length === 1
+        ? 'It has a stop and target at Alpaca'
+        : open.length === 2
+          ? 'Both have a stop and target at Alpaca'
+          : 'All have a stop and target at Alpaca',
+    );
+  }
+  clauses.push(...exits);
+  return clauses.length ? ` ${clauses.join('; ')}.` : '';
 }
 
 function OpenPositionsMini({
@@ -540,13 +645,20 @@ function OpenPositionsMini({
       : displayWeekdayTime(nextCycle)
     : null;
   const open = res.data?.open ?? [];
+  const cap = res.data?.max_open_positions;
+  const positionsLabel =
+    cap !== null && cap !== undefined
+      ? `Open positions · ${open.length} of ${cap}`
+      : 'Open positions';
   return (
     <Card
-      label="Open positions"
+      id="positions"
+      label={positionsLabel}
+      ariaLabel={positionsLabel}
       right={<Link to="/positions">Positions & orders</Link>}
       busy={res.loading}
       refreshing={res.refreshing}
-      style={{ flex: 1 }}
+      style={{ flex: '1 1 520px', gap: '14px', scrollMarginTop: 16 }}
     >
       <CardBody
         res={res}
@@ -577,7 +689,7 @@ function OpenPositionsMini({
         }
       >
         {() => (
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {open.map((p) => {
             const near = Number(res.data?.near_stop_atr ?? 1.5);
             const closeToStop =
@@ -628,13 +740,15 @@ function OpenPositionsMini({
                     ))}
                   </span>{' '}
                   <span
+                    className="sa-pos-dist"
                     style={{
                       fontFamily: 'var(--sa-font-mono)',
                       fontSize: 'var(--sa-text-sm)',
                       color: closeToStop ? 'var(--sa-warning-text)' : 'var(--sa-text-muted)',
                     }}
                   >
-                    · {p.to_stop_pct !== null && p.to_stop_pct !== undefined ? `${p.to_stop_pct.toFixed(2)}%` : '—'}{' '}
+                    <span className="sa-hide-phone">· </span>
+                    {p.to_stop_pct !== null && p.to_stop_pct !== undefined ? `${p.to_stop_pct.toFixed(2)}%` : '—'}{' '}
                     · {p.to_stop_atr !== null && p.to_stop_atr !== undefined ? `${p.to_stop_atr.toFixed(1)}` : '—'} ATR to stop
                   </span>
                 </span>
@@ -657,10 +771,11 @@ function OpenPositionsMini({
               </Link>
             );
           })}
-          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5, paddingTop: 'var(--sa-space-2)' }}>
+          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
             Bar: stop (red) to target (green), entry tick, white dot for the last
             price. Under {res.data?.near_stop_atr ?? '1.5'} ATR (1h) to the stop
             the distance turns amber.
+            {brokerFootnote(open)}
           </div>
         </div>
         )}
@@ -1060,16 +1175,69 @@ export default function Dashboard() {
 
       <NeedsYouCard res={attentionRes} />
 
+      {/* Phone only (item 073): jump links for the ~6,000 px page. */}
+      <nav
+        aria-label="On this page"
+        className="sa-phone-only"
+        style={{
+          gap: '8px',
+          overflowX: 'auto',
+          paddingBottom: '2px',
+          alignItems: 'center',
+        }}
+      >
+        <span
+          style={{
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-text-muted)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          On this page
+        </span>
+        {(
+          [
+            ['Positions', '#positions'],
+            ['Chart', '#chart'],
+            ['Latest decision', '#decision'],
+            ['Today', '#today'],
+            ['Briefing', '#briefing'],
+            ['Watchlist', '#watchlist'],
+          ] as const
+        ).map(([label, href]) => (
+          <a
+            key={href}
+            href={href}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              height: '36px',
+              padding: '0 var(--sa-space-3)',
+              borderRadius: '18px',
+              border: '1px solid var(--sa-border)',
+              background: 'var(--sa-raised)',
+              color: 'var(--sa-text-2)',
+              fontSize: 'var(--sa-text-md)',
+              textDecoration: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+
       {(dashboard === null ||
         dashboard.cycle_line !== null ||
         dashboard.cycle_counter !== null) && (
-        <div
+        <section
+          aria-label="This cycle"
           style={{
             display: 'flex',
             flexWrap: 'wrap',
-            alignItems: 'center',
-            gap: '10px var(--sa-space-3)',
-            padding: 'var(--sa-space-3) var(--sa-space-4)',
+            alignItems: 'stretch',
+            gap: '14px 16px',
+            padding: '14px 16px',
             background: 'var(--sa-panel)',
             border: '1px solid var(--sa-border)',
             borderRadius: 'var(--sa-radius-lg)',
@@ -1078,38 +1246,96 @@ export default function Dashboard() {
         >
           <CardBoundary name="Cycle state">
           <CardBody res={dashboardRes} what="the cycle state" skeleton={<SkeletonText lines={1} />}>
-            {(d) => (
-              <>
-                {d.cycle_line && (
-                  <>
-                    <span
+            {(d) =>
+              d.cycle_line === null && d.cycle_counter === null ? null : (
+                <>
+                  {d.cycle_line && (
+                    <div
                       style={{
-                        padding: '3px var(--sa-space-2)',
-                        borderRadius: 'var(--sa-radius-sm)',
-                        background: 'var(--sa-subtle)',
-                        color: 'var(--sa-text-2)',
-                        fontSize: 'var(--sa-text-sm)',
-                        fontWeight: 600,
+                        flex: '1 1 460px',
+                        minWidth: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '12px',
                       }}
                     >
-                      {d.cycle_line.label}
-                    </span>
-                    <span
-                      style={{ flex: '1 1 420px', color: 'var(--sa-text-2)', lineHeight: 1.5 }}
+                      <p
+                        style={{
+                          margin: 0,
+                          color: 'var(--sa-text-2)',
+                          lineHeight: 1.5,
+                        }}
+                      >
+                        {(() => {
+                        const parts = cycleSentenceParts(d.cycle_line);
+                        const rest = parts.rest ?? '';
+                        const at = rest.indexOf('pre-filter');
+                        return (
+                          <>
+                            <b style={{ fontWeight: 600, color: 'var(--sa-text)' }}>
+                              {parts.label}
+                            </b>
+                            {parts.ny && (
+                              <>
+                                {' '}
+                                <span style={{ color: 'var(--sa-text-muted)' }}>
+                                  · {parts.ny}
+                                </span>
+                              </>
+                            )}
+                            {parts.rest && ' · '}
+                            {at < 0 ? (
+                              rest
+                            ) : (
+                              <>
+                                {rest.slice(0, at)}
+                                <span
+                                  title="The rules check that decides whether the model is asked at all."
+                                  style={{
+                                    textDecoration: 'underline dotted',
+                                    textUnderlineOffset: '3px',
+                                    cursor: 'help',
+                                  }}
+                                >
+                                  pre-filter
+                                </span>
+                                {rest.slice(at + 'pre-filter'.length)}
+                              </>
+                            )}
+                          </>
+                        );
+                        })()}
+                      </p>
+                      <CycleValues
+                        line={d.cycle_line}
+                        callsPerCycle={d.stats.calls_per_cycle}
+                      />
+                    </div>
+                  )}
+                  {d.cycle_counter && (
+                    <div
+                      role="timer"
+                      aria-label="Cycle counter"
+                      className="sa-cyc-counter"
+                      style={{
+                        flex: '0 1 340px',
+                        minWidth: '260px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px',
+                        paddingLeft: '16px',
+                        borderLeft: '1px solid var(--sa-border)',
+                      }}
                     >
-                      {d.cycle_line.text}
-                    </span>
-                  </>
-                )}
-                {d.cycle_line && d.cycle_counter && (
-                  <span aria-hidden="true" style={{ color: 'var(--sa-text-muted)' }}>·</span>
-                )}
-                {d.cycle_counter && <CycleCounter counter={d.cycle_counter} />}
-              </>
-            )}
+                      <CycleCounter counter={d.cycle_counter} />
+                    </div>
+                  )}
+                </>
+              )
+            }
           </CardBody>
           </CardBoundary>
-        </div>
+        </section>
       )}
 
       {dashboardRes.failure && (
@@ -1122,25 +1348,59 @@ export default function Dashboard() {
       )}
       {dashboard === null ? (
         dashboardRes.failure === null && (
-          <div
-            className="sa-loading"
-            style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)' }}
-          >
-            {[0, 1].map((i) => (
+          <div className="sa-loading sa-tiles sa-tiles-4">
+            {[0, 1, 2, 3].map((i) => (
               <SkeletonTile key={i} />
             ))}
           </div>
         )
       ) : (
-      <div
-        className="sa-card-row"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 'var(--sa-space-3)',
-          opacity: dashboardRes.failure ? 0.55 : 1,
-        }}
+      <section
+        aria-label="Account summary"
+        className="sa-tiles sa-tiles-4"
+        style={{ opacity: dashboardRes.failure ? 0.55 : 1 }}
       >
+        <CardBoundary name="Since start">
+        <Link
+          to="/performance"
+          className="sa-tile"
+          aria-label="Since start, open Performance"
+          style={{ display: 'flex' }}
+        >
+          <StatCard
+            label="Since start"
+            value={sincePct === null ? '—' : signedPct(sincePct)}
+            valueColor={
+              sincePct === null
+                ? undefined
+                : sincePct > 0
+                  ? 'var(--sa-positive)'
+                  : sincePct < 0
+                    ? 'var(--sa-negative)'
+                    : undefined
+            }
+            sub={`SPY ${stats?.spy_pct !== null && stats?.spy_pct !== undefined ? signedPct(stats.spy_pct) : '—'} · ${stats?.since_label ?? ''}`}
+            footer="Open →"
+            style={{ flex: '1 1 auto', width: '100%', height: '100%' }}
+          />
+        </Link>
+        </CardBoundary>
+        <CardBoundary name="Positions">
+        <Link
+          to="/positions"
+          className="sa-tile"
+          aria-label="Positions, open Positions and orders"
+          style={{ display: 'flex' }}
+        >
+          <StatCard
+            label="Positions"
+            value={`${stats?.positions ?? 0} of ${stats?.positions_cap ?? '—'}`}
+            sub={`cash $${stats?.cash ?? '—'} · no margin`}
+            footer="Open →"
+            style={{ flex: '1 1 auto', width: '100%', height: '100%' }}
+          />
+        </Link>
+        </CardBoundary>
         <CardBoundary name="Model calls today">
         <Link
           to="/inspector?source=live"
@@ -1160,64 +1420,83 @@ export default function Dashboard() {
                   : '')
               : undefined
           }
-          style={{
-            display: 'flex',
-            flex: '1 1 190px',
-            minWidth: 0,
-            textDecoration: 'none',
-          }}
+          style={{ display: 'flex' }}
         >
           <StatCard
             label={
-              dashboard.session.shown_is_today
-                ? 'Model calls today'
-                : `Model calls · ${sessionDayShort(dashboard.session.shown_date)}`
+              <span
+                title="Decision calls in the shown session: at most the per-cycle cap each cycle. Reviews, shadows and Ask have their own monthly caps."
+                style={{
+                  textDecoration: 'underline dotted',
+                  textUnderlineOffset: '3px',
+                  cursor: 'help',
+                  alignSelf: 'flex-start',
+                }}
+              >
+                {dashboard.session.shown_is_today
+                  ? 'Model calls today'
+                  : `Model calls · ${sessionDayShort(dashboard.session.shown_date)}`}
+              </span>
             }
             value={`${stats?.calls_today ?? 0}`}
             bar={{
               width: `${stats && stats.calls_max > 0 ? Math.min(100, (stats.calls_today / stats.calls_max) * 100) : 0}%`,
               color: 'var(--sa-info)',
             }}
-            sub={`of ${stats?.calls_max ?? '—'} max · $${stats ? Number(stats.calls_cost_today).toFixed(3) : '—'} this session · $${stats ? Number(stats.calls_cost_month).toFixed(2) : '—'} this month`}
-            style={{ flex: '1 1 auto', width: '100%', cursor: 'pointer' }}
+            sub={`of ${stats?.calls_max ?? '—'} max · $${stats ? Number(stats.calls_cost_today).toFixed(3) : '—'} ${dashboard.session.shown_is_today ? 'today' : 'this session'}`}
+            footer="Open →"
+            style={{ flex: '1 1 auto', width: '100%', height: '100%' }}
           />
         </Link>
         </CardBoundary>
-        <CardBoundary name="Since start">
+        <CardBoundary name="Last cycle">
         <Link
-          to="/performance"
+          to={dashboard.last_cycle ? `/logs?cycle=c-${String(dashboard.last_cycle.cycle_id).padStart(4, '0')}` : '/logs'}
           className="sa-tile"
-          aria-label="Since start, open Performance"
-          style={{ display: 'flex', flex: '1 1 190px', minWidth: 0 }}
+          aria-label="Last cycle, open Logs"
+          title={
+            dashboard.last_cycle
+              ? `How long the ${formatAmsTime(dashboard.last_cycle.time)} cycle took. Its model calls ran together. Amber above the slow-cycle threshold.`
+              : undefined
+          }
+          style={{ display: 'flex' }}
         >
           <StatCard
-            label="Since start"
-            value={sincePct === null ? '—' : signedPct(sincePct)}
-            valueColor={
-              sincePct === null
-                ? undefined
-                : sincePct > 0
-                  ? 'var(--sa-positive)'
-                  : sincePct < 0
-                    ? 'var(--sa-negative)'
-                    : undefined
+            label={
+              <span
+                title="How long the latest cycle took. Amber above the slow-cycle threshold."
+                style={{
+                  textDecoration: 'underline dotted',
+                  textUnderlineOffset: '3px',
+                  cursor: 'help',
+                  alignSelf: 'flex-start',
+                }}
+              >
+                Last cycle
+              </span>
             }
-            sub={`SPY ${stats?.spy_pct !== null && stats?.spy_pct !== undefined ? signedPct(stats.spy_pct) : '—'} · ${stats?.since_label ?? ''}`}
-            style={{ flex: '1 1 auto', width: '100%' }}
+            value={
+              dashboard.last_cycle
+                ? formatDuration(dashboard.last_cycle.took_seconds)
+                : '—'
+            }
+            valueColor={
+              dashboard.last_cycle?.took_warn ? 'var(--sa-warning-text)' : undefined
+            }
+            sub={
+              dashboard.last_cycle
+                ? `${dashboard.last_cycle.calls} call${dashboard.last_cycle.calls === 1 ? '' : 's'}`
+                : undefined
+            }
+            footer="Open →"
+            style={{ flex: '1 1 auto', width: '100%', height: '100%' }}
           />
         </Link>
         </CardBoundary>
-      </div>
+      </section>
       )}
 
-      <div
-        className="sa-card-row"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 'var(--sa-space-5)',
-        }}
-      >
+      <div className="sa-dash-pair">
         <OpenPositionsMini
           res={positionsRes}
           nextCycle={dashboard?.session.next_cycle ?? null}
@@ -1241,25 +1520,20 @@ export default function Dashboard() {
         />
       )}
 
-      <div
-        className="sa-card-row"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 'var(--sa-space-4)',
-        }}
-      >
-        <div style={{ flex: '2 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <div className="sa-dash-pair">
+        <div style={{ flex: '999 1 600px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Card
+            id="chart"
             ariaLabel={chartSymbol ? `Chart for ${chartSymbol}` : 'Chart'}
             busy={chartRes.loading}
             refreshing={chartRes.refreshing}
+            style={{ scrollMarginTop: 16 }}
           >
             <div
               style={{
                 display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--sa-space-3)',
+                alignItems: 'baseline',
+                gap: '8px 16px',
                 flexWrap: 'wrap',
               }}
             >
@@ -1280,7 +1554,7 @@ export default function Dashboard() {
                   <span
                     style={{
                       fontFamily: 'var(--sa-font-mono)',
-                      fontSize: 'var(--sa-text-md)',
+                      fontSize: 'var(--sa-text-base)',
                       color:
                         chart.day_change_pct !== null && chart.day_change_pct >= 0
                           ? 'var(--sa-positive)'
@@ -1375,9 +1649,9 @@ export default function Dashboard() {
               res={chartRes}
               what={chartSymbol ? `the chart for ${chartSymbol}` : 'the chart'}
               isEmpty={(d) => d === null || d.bars.length === 0}
-              skeleton={<SkeletonChart height={340} />}
+              skeleton={<SkeletonChart height={320} />}
               empty={
-                <div style={{ height: '340px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sa-text-muted)' }}>
+                <div style={{ height: '320px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sa-text-muted)' }}>
                   {chartSymbol
                     ? `No bars loaded for ${chartSymbol} yet — bars appear after its first data pull.`
                     : 'Pick a symbol to chart.'}
@@ -1386,34 +1660,27 @@ export default function Dashboard() {
             >
               {(d) => d !== null && <PriceChart bars={d.bars} levels={d.levels} />}
             </CardBody>
-            <div style={{ display: 'flex', gap: 'var(--sa-space-4)', flexWrap: 'wrap', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-              <Legend swatch="var(--sa-chart-ema20)" label="EMA 20" />
-              <Legend swatch="var(--sa-chart-ema50)" label="EMA 50" />
-              <Legend swatch="var(--sa-chart-vwap)" label="Session VWAP" />
-              {chart?.levels.entry && <Legend swatch="var(--sa-text-2)" label="Entry" />}
-              {chart?.levels.stop && <Legend swatch="var(--sa-negative)" label="Stop" />}
-              {chart?.levels.target && <Legend swatch="var(--sa-positive)" label="Target" />}
+            <div style={{ display: 'flex', gap: '8px 16px', flexWrap: 'wrap', marginTop: '18px', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              <Legend kind="bar" swatch="var(--sa-chart-ema20)" label="EMA 20" />
+              <Legend kind="bar" swatch="var(--sa-chart-ema50)" label="EMA 50" />
+              <Legend kind="dashed" swatch="var(--sa-chart-vwap)" width={2} label="Session VWAP" />
+              {chart?.levels.entry && <Legend kind="dashed" swatch="var(--sa-text-2)" label="Entry" />}
+              {chart?.levels.stop && <Legend kind="line" swatch="var(--sa-negative)" label="Stop" />}
+              {chart?.levels.target && <Legend kind="line" swatch="var(--sa-positive)" label="Target" />}
             </div>
           </Card>
         </div>
-        <div style={{ flex: '1 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: '1 1 340px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <LatestDecision res={dashboardRes} />
         </div>
       </div>
 
-      <div
-        className="sa-card-row"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 'var(--sa-space-5)',
-        }}
-      >
+      <div className="sa-dash-pair">
         <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Feed res={dashboardRes} />
         </div>
         <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <BriefingCard res={dashboardRes} />
+          <BriefingCard res={dashboardRes} id="briefing" />
         </div>
       </div>
 
@@ -1421,6 +1688,7 @@ export default function Dashboard() {
         res={watchlistRes}
         selected={chartSymbol}
         onSelect={pickSymbol}
+        id="watchlist"
       />
 
       <FindSymbolDialog
@@ -1438,10 +1706,30 @@ export default function Dashboard() {
   );
 }
 
-function Legend({ swatch, label }: { swatch: string; label: string }) {
+function Legend({
+  kind,
+  swatch,
+  width,
+  label,
+}: {
+  kind: 'bar' | 'line' | 'dashed';
+  swatch: string;
+  width?: number;
+  label: string;
+}) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-      <span style={{ width: '14px', height: '3px', borderRadius: '2px', background: swatch }} />
+      <span
+        style={
+          kind === 'bar'
+            ? { width: '14px', height: '2px', background: swatch }
+            : {
+                width: '14px',
+                height: 0,
+                borderTop: `${width ?? 1}px ${kind === 'dashed' ? 'dashed' : 'solid'} ${swatch}`,
+              }
+        }
+      />
       {label}
     </span>
   );

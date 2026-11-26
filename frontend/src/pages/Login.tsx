@@ -2,16 +2,27 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import { post, errorMessages, safeNextPath } from '../api/client';
+import { useAuthStatus } from '../api/auth';
+import { displayTime } from '../format';
 
 /**
  * Sign in (design/screens/Login.dc.html): password → authenticator or
  * recovery code → done. The locked state is the 429 answer rendered
  * in place. "Stock Trading Agent" is the product name.
+ *
+ * Item 083: while the global pause lasts, /api/auth/status reports
+ * `paused_until`; a known browser (a live device cookie) sees the amber
+ * note and keeps the form, an unknown one sees only the pause and its
+ * end time with the form disabled.
  */
 export default function Login() {
   const [params] = useSearchParams();
   const next = safeNextPath(params.get('next'));
   const expired = params.get('expired') === '1';
+  const status = useAuthStatus();
+  const pausedUntil = status?.paused_until ?? null;
+  const knownBrowser = status?.known_device ?? false;
+  const pausedOut = pausedUntil !== null && !knownBrowser;
 
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
@@ -159,8 +170,87 @@ export default function Login() {
             You were signed out after a while without activity. The agent kept running.
           </div>
         )}
+        {pausedUntil !== null && knownBrowser && (
+          <div
+            role="status"
+            style={{
+              display: 'flex',
+              gap: 10,
+              padding: '12px 14px',
+              border: '1px solid var(--sa-warning-border)',
+              background: 'var(--sa-warning-bg)',
+              borderRadius: 'var(--sa-radius-md)',
+              color: 'var(--sa-text-2)',
+              fontSize: 'var(--sa-text-md)',
+              lineHeight: 1.5,
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              style={{ flex: '0 0 16px', marginTop: 2 }}
+            >
+              <path d="M12 3l10 18H2z" />
+              <line x1="12" y1="10" x2="12" y2="14" />
+              <line x1="12" y1="18" x2="12" y2="18" />
+            </svg>
+            <span>
+              Sign-in is paused for other browsers until{' '}
+              <b style={{ fontFamily: 'var(--sa-font-mono)', fontWeight: 600 }}>
+                {displayTime(pausedUntil)}
+              </b>{' '}
+              after many failed attempts. This browser is known, so you can sign in.
+            </span>
+          </div>
+        )}
+        {pausedOut && (
+          <div
+            role="alert"
+            style={{
+              display: 'flex',
+              gap: 10,
+              padding: '12px 14px',
+              border: '1px solid var(--sa-negative-border)',
+              background: 'var(--sa-negative-bg)',
+              borderRadius: 'var(--sa-radius-md)',
+              color: 'var(--sa-negative-soft)',
+              fontSize: 'var(--sa-text-md)',
+              lineHeight: 1.5,
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              style={{ flex: '0 0 16px', marginTop: 2 }}
+            >
+              <rect x="5" y="11" width="14" height="10" rx="2" />
+              <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+            </svg>
+            <span>
+              Sign-in is paused until{' '}
+              <b style={{ fontFamily: 'var(--sa-font-mono)', fontWeight: 600 }}>
+                {displayTime(pausedUntil)}
+              </b>{' '}
+              after many failed attempts. You were notified by email.
+            </span>
+          </div>
+        )}
         {step === "password" ? (
-          <>
+          <div style={pausedOut ? { opacity: 0.5 } : undefined}>
             <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Sign in</h1>
             <div>
               <label htmlFor="pw" style={label}>
@@ -170,6 +260,7 @@ export default function Login() {
                 id="pw"
                 type="password"
                 autoComplete="current-password"
+                disabled={pausedOut}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && submitPassword()}
@@ -187,6 +278,7 @@ export default function Login() {
             >
               <input
                 type="checkbox"
+                disabled={pausedOut}
                 checked={remember}
                 onChange={(e) => setRemember(e.target.checked)}
               />
@@ -197,14 +289,19 @@ export default function Login() {
                 {error}
               </p>
             )}
-            <button type="button" style={button} onClick={submitPassword} disabled={busy || !password}>
+            <button
+              type="button"
+              style={pausedOut ? { ...button, background: 'var(--sa-raised)', color: 'var(--sa-text-muted)', cursor: 'default' } : button}
+              onClick={submitPassword}
+              disabled={busy || !password || pausedOut}
+            >
               Continue
             </button>
             <p style={{ margin: 0, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
               One account. It is created on the server with{' '}
               <code>make create-user</code>; there is no sign-up page.
             </p>
-          </>
+          </div>
         ) : (
           <>
             <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Authenticator code</h1>
@@ -254,6 +351,11 @@ export default function Login() {
               </button>
             </div>
           </>
+        )}
+        {pausedUntil !== null && knownBrowser && (
+          <p style={{ margin: 0, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
+            An unknown browser sees only the pause and its end time. The password, the code and the limit per address still apply here.
+          </p>
         )}
       </div>
     </div>

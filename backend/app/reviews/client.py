@@ -91,6 +91,30 @@ WEEKLY_V2_JSON_SCHEMA: dict[str, Any] = {
     },
 }
 
+# weekly.v3 (item 079): the story replaces summary + observations; the
+# suggestion keeps the v2 {text, evidence} shape.
+WEEKLY_V3_JSON_SCHEMA: dict[str, Any] = {
+    "name": "weekly_review_v3",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "story": {"type": "string"},
+            "suggestion": {
+                "type": ["object", "null"],
+                "additionalProperties": False,
+                "properties": {
+                    "text": {"type": "string"},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["text", "evidence"],
+            },
+        },
+        "required": ["story", "suggestion"],
+    },
+}
+
 # verdict.v2 (PR 32): no verdict field — the label is code's draft_verdict.
 VERDICT_V2_JSON_SCHEMA: dict[str, Any] = {
     "name": "decision_verdict_v2",
@@ -115,6 +139,8 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     "briefing": BRIEFING_JSON_SCHEMA,
     "verdict": VERDICT_JSON_SCHEMA,
     "weekly.v2": WEEKLY_V2_JSON_SCHEMA,
+    "weekly.v3": WEEKLY_V3_JSON_SCHEMA,
+    "briefing.v3": BRIEFING_JSON_SCHEMA,
     "verdict.v2": VERDICT_V2_JSON_SCHEMA,
 }
 

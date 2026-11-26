@@ -28,6 +28,10 @@ export SA_PUBLIC_URL="${SA_PUBLIC_URL:-https://localhost}"
 export SA_DOMAIN="${SA_DOMAIN:-localhost}"
 export SA_VERSION="${SA_VERSION:-test}"
 export SA_DEPLOYED_AT="${SA_DEPLOYED_AT:-}"
+# The base file pins the app image to ${SA_IMAGE:?} — the local override
+# swaps in the local build, but compose still interpolates the base file.
+export SA_IMAGE="${SA_IMAGE:-stock-agent:local}"
+export SA_IMAGE_VERIFIED="${SA_IMAGE_VERIFIED:-}"
 COMPOSE=(env COMPOSE_PROJECT_NAME=stock-agent "$DOCKER" compose
     -f docker-compose.yml -f docker-compose.local.yml)
 BASE=https://localhost:8443
@@ -82,6 +86,18 @@ if grep -qE "CapEff:[[:space:]]*0+$" <<<"$capeff"; then
 else
     fail "capabilities: $capeff"
 fi
+# Item 084: the runtime image ships no tests, and /srv is not writable.
+"${COMPOSE[@]}" exec -T app sh -c 'test ! -d /srv/backend/tests && test ! -d /srv/backend/eval' \
+    && ok "runtime image has no tests/eval" || fail "tests or eval shipped in the runtime image"
+"${COMPOSE[@]}" exec -T app sh -c 'touch /srv/backend/x 2>/dev/null && echo wrote || echo ro' \
+    | grep -q ro && ok "/srv not writable by the app user" || fail "/srv is writable"
+for svc in app caddy; do
+    ro="$("$DOCKER" inspect -f '{{.HostConfig.ReadonlyRootfs}}' "stock-agent-$svc" 2>/dev/null || true)"
+    [[ "$svc" == "app" || "$ro" == "true" ]] \
+        && ok "$svc read-only root (${ro:-app})" || fail "$svc read-only root: $ro"
+    pl="$("$DOCKER" inspect -f '{{.HostConfig.PidsLimit}}' "stock-agent-$svc" 2>/dev/null || true)"
+    [[ -n "$pl" && "$pl" != "0" ]] && ok "$svc pids_limit $pl" || fail "$svc pids_limit: $pl"
+done
 
 # --- healthz says only the version ----------------------------------------
 body="$(curl -fsSk "$BASE/healthz")"

@@ -178,7 +178,13 @@ def record_event(
 ) -> Event:
     """Append one row to the events log."""
     from app.data.cache import _naive_utc
+    from app.logging_config import scrub_value
 
+    # Second line behind safe_error at the sources (item 081): details
+    # may carry exception text collected upstream — scrub every string
+    # before the row is stored or fanned out to notifications.
+    if details is not None:
+        details = scrub_value(details)
     event = Event(
         time=_naive_utc(clock.now()),
         level=level,

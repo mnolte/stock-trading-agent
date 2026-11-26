@@ -38,6 +38,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
+# ``refresh_daily``'s ``now`` for the 2026-10-15 fixtures: end of that
+# New York day, so earlier sessions count as confirmable source gaps
+# while the newest session is still too fresh to gap (item 092).
+_DAILY_NOW = datetime(2026, 10, 15, 23, 0, tzinfo=NY_TZ)
+
 
 @pytest.fixture
 def fake_sources() -> DataSources:
@@ -1017,7 +1022,7 @@ async def test_refresh_daily_fills_cache(
     service = MarketDataService(
         fake_sources, calendar, config, session_factory=session_factory
     )
-    results = await service.refresh_daily(date(2026, 10, 15))
+    results = await service.refresh_daily(date(2026, 10, 15), _DAILY_NOW)
     for symbol in ("SPY", "AAPL"):
         assert results[symbol].error is None
         assert results[symbol].data == 5
@@ -1043,7 +1048,7 @@ async def test_refresh_daily_fetches_only_missing_sessions(
     service = MarketDataService(
         fake_sources, FakeCalendarSource(), config, session_factory=session_factory
     )
-    await service.refresh_daily(date(2026, 10, 15))
+    await service.refresh_daily(date(2026, 10, 15), _DAILY_NOW)
     starts: list[date] = []
     original = fake_sources.bars.fetch_daily_bars
 
@@ -1052,7 +1057,7 @@ async def test_refresh_daily_fetches_only_missing_sessions(
         return await original(symbol, start, end)
 
     fake_sources.bars.fetch_daily_bars = spy  # type: ignore[method-assign]
-    again = await service.refresh_daily(date(2026, 10, 15))
+    again = await service.refresh_daily(date(2026, 10, 15), _DAILY_NOW)
     assert starts == [date(2026, 10, 15)] * len(starts)
     for symbol in ("SPY", "AAPL"):
         assert again[symbol].error is None
@@ -1083,7 +1088,7 @@ async def test_refresh_daily_records_source_gaps(
         )
 
     fake_sources.bars.fetch_daily_bars = missing_tuesday  # type: ignore[method-assign]
-    results = await service.refresh_daily(date(2026, 10, 15))
+    results = await service.refresh_daily(date(2026, 10, 15), _DAILY_NOW)
     assert all(r.error is None for r in results.values())
     for symbol in ("SPY", "AAPL"):
         assert service.bars_cache.daily_gap_dates(
@@ -1098,7 +1103,7 @@ async def test_refresh_daily_records_source_gaps(
         return DataResult(data=[], error="http_500", source="alpaca")
 
     fake_sources.bars.fetch_daily_bars = failing  # type: ignore[method-assign]
-    await service.refresh_daily(date(2026, 10, 15))
+    await service.refresh_daily(date(2026, 10, 15), _DAILY_NOW)
     assert service.bars_cache.daily_gap_dates(
         "AAPL",
         {
@@ -1119,7 +1124,7 @@ async def test_refresh_daily_records_source_gaps(
         return await original(symbol, start, end)
 
     fake_sources.bars.fetch_daily_bars = spy  # type: ignore[method-assign]
-    await service.refresh_daily(date(2026, 10, 15))
+    await service.refresh_daily(date(2026, 10, 15), _DAILY_NOW)
     assert starts == [date(2026, 10, 15)] * len(starts)
     assert service.bars_cache.daily_gap_dates("AAPL", {gap_day}) == {gap_day}
 
@@ -1133,7 +1138,7 @@ async def test_refresh_daily_records_source_gaps(
             delete(Bar1dRow).where(Bar1dRow.date == date(2026, 10, 9))
         )
         session.commit()
-    await service.refresh_daily(date(2026, 10, 15))
+    await service.refresh_daily(date(2026, 10, 15), _DAILY_NOW)
     assert service.bars_cache.daily_gap_dates("AAPL", {gap_day}) == set()
 
 
@@ -1149,7 +1154,7 @@ async def test_refresh_daily_refetches_a_mid_range_hole(
     service = MarketDataService(
         fake_sources, FakeCalendarSource(), config, session_factory=session_factory
     )
-    await service.refresh_daily(date(2026, 10, 15))
+    await service.refresh_daily(date(2026, 10, 15), _DAILY_NOW)
     hole = date(2026, 10, 13)
     with session_factory() as session:
         session.execute(delete(Bar1dRow).where(Bar1dRow.date == hole))
@@ -1162,13 +1167,72 @@ async def test_refresh_daily_refetches_a_mid_range_hole(
         return await original(symbol, start, end)
 
     fake_sources.bars.fetch_daily_bars = spy  # type: ignore[method-assign]
-    results = await service.refresh_daily(date(2026, 10, 15))
+    results = await service.refresh_daily(date(2026, 10, 15), _DAILY_NOW)
     # Every symbol's request starts at the hole; the newest session is
     # inside the range and gets refetched with it.
     assert set(starts.values()) == {hole}
     for symbol in ("SPY", "AAPL"):
         assert results[symbol].error is None
         assert results[symbol].data == 1
+
+
+async def test_refresh_daily_gaps_only_confirmed_sessions(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """A session that has not closed — or just closed, while the source
+    may still be publishing its daily bar — is missing, not a source
+    gap: no ``daily_source_gaps`` row is written and the next refresh
+    asks for it again. Once its New York date is safely past, a still
+    absent bar is recorded as a gap like any other (item 092)."""
+    config = AppConfig()
+    config.yaml["schedule"]["daily_history_sessions"] = 5
+    service = MarketDataService(
+        fake_sources, FakeCalendarSource(), config, session_factory=session_factory
+    )
+    today = date(2026, 10, 15)
+    original = fake_sources.bars.fetch_daily_bars
+
+    async def no_today_bar(
+        symbol: str, start: date, end: date
+    ) -> DataResult[list[DailyBar]]:
+        result = await original(symbol, start, end)
+        return DataResult(
+            data=[b for b in result.data if b.date != today],
+            source=result.source,
+        )
+
+    fake_sources.bars.fetch_daily_bars = no_today_bar  # type: ignore[method-assign]
+
+    # Pre-market: today's session has not happened — no gap row.
+    await service.refresh_daily(
+        today, datetime(2026, 10, 15, 8, 0, tzinfo=NY_TZ)
+    )
+    # Just after the close: the daily bar may still be publishing —
+    # still no gap row.
+    await service.refresh_daily(
+        today, datetime(2026, 10, 15, 16, 30, tzinfo=NY_TZ)
+    )
+    for symbol in ("SPY", "AAPL"):
+        assert service.bars_cache.daily_gap_dates(symbol, {today}) == set()
+
+    # The next morning the session is confirmable: the still-absent bar
+    # becomes a source gap, and the fetch range starts at that date —
+    # the bar was asked for again, not skipped as known-missing.
+    starts: list[date] = []
+
+    async def spy(symbol: str, start: date, end: date) -> DataResult[list[DailyBar]]:
+        starts.append(start)
+        return await no_today_bar(symbol, start, end)
+
+    fake_sources.bars.fetch_daily_bars = spy  # type: ignore[method-assign]
+    next_day = date(2026, 10, 16)
+    results = await service.refresh_daily(
+        next_day, datetime(2026, 10, 16, 8, 0, tzinfo=NY_TZ)
+    )
+    assert all(r.error is None for r in results.values())
+    assert starts and all(s == today for s in starts)
+    for symbol in results:
+        assert service.bars_cache.daily_gap_dates(symbol, {today}) == {today}
 
 
 # ----------------------------------------------------------------------

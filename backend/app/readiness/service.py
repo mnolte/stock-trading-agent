@@ -44,7 +44,11 @@ from app.db.models import (
 )
 from app.engine.performance import compute_performance
 from app.log_index import index_available, index_path
-from app.market.calendar import NY_TZ, CalendarProvider
+from app.market.calendar import (
+    NY_TZ,
+    CalendarProvider,
+    WeekdayCalendarProvider,
+)
 from app.market.clock import Clock
 from app.notifications.service import Notifier, NullNotifier
 from app.shadows.compare import strategy_row
@@ -78,6 +82,7 @@ WINDOW_STOPS = 30
 WINDOW_KILL = 30
 WINDOW_ERRORS = 10
 WINDOW_PRICE = 20
+WINDOW_CRITICAL = 20
 
 _MONTHS = (
     "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -236,6 +241,8 @@ def _criterion(
     hint: str | None = None,
     estimate: str | None = None,
     estimate_date: str | None = None,
+    needs: str | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     key_, group, label, default_target, default_hint = _META_BY_KEY[key]
     assert key_ == key  # noqa: S101 - internal invariant
@@ -252,6 +259,12 @@ def _criterion(
         "hint": hint if hint is not None else default_hint,
         "estimate": estimate,
         "estimate_date": estimate_date,
+        # "needs": the minimum-sample unit a waiting criterion counts
+        # towards ("30 closed trades"); item 100 forward + GUI wording.
+        "needs": needs,
+        # "detail": raw numbers/dates the item-100 forward sentences fill
+        # from; never replaces value/target/sub.
+        "detail": detail or {},
     }
 
 
@@ -445,7 +458,12 @@ def dismiss_error(
     if (
         event.resolved_at is not None
         or event.level not in ERROR_LEVELS
-        or event.affects == "none"
+        or (
+            event.affects == "none"
+            # The stored-text scrub flag (item 081) touches no
+            # decision/order/fill but is still dismissable with a note.
+            and event.event_type != "stored_text_scrub"
+        )
     ):
         raise ReadinessError("not an unresolved error")
     if event.event_type in STATE_ERROR_TYPES:
@@ -739,6 +757,9 @@ def evaluate(
             target="> 0",
             status=PASS if gap is not None and gap > 0 else NOT_YET,
             sample=sessions,
+            detail=(
+                {"gap_pts": float(gap)} if gap is not None else None
+            ),
         )
     )
 
@@ -750,6 +771,11 @@ def evaluate(
             target=f"under {max_dd:g}%",
             status=PASS if dd is not None and dd < max_dd else NOT_YET,
             sample=sessions,
+            detail=(
+                {"dd_pct": float(dd), "max_pct": float(max_dd)}
+                if dd is not None
+                else None
+            ),
         )
     )
 
@@ -777,6 +803,17 @@ def evaluate(
                 if adj_r_count < ratio_min
                 else None
             ),
+            needs=(
+                f"{ratio_min} closed trades"
+                if adj_r_count < ratio_min
+                else None
+            ),
+            detail={
+                "avg_r": (
+                    float(avg_r_adj) if avg_r_adj is not None else None
+                ),
+                "min_r": float(min_avg_r),
+            },
         )
     )
 
@@ -804,6 +841,15 @@ def evaluate(
                 if adj_pnl_count < ratio_min
                 else None
             ),
+            needs=(
+                f"{ratio_min} closed trades"
+                if adj_pnl_count < ratio_min
+                else None
+            ),
+            detail={
+                "pf": float(pf) if pf is not None else None,
+                "min_pf": float(min_pf),
+            },
         )
     )
 
@@ -820,6 +866,8 @@ def evaluate(
     beats_status = WAITING
     beats_sub: str | None = "the question this run must answer: does the model add value?"
     beats_sample: int | None = None
+    beats_needs: str | None = None
+    beats_detail: dict[str, Any] = {}
     if baseline is None:
         beats_sub = "no active rules-only shadow"
         beats_sample = 0
@@ -833,6 +881,7 @@ def evaluate(
             beats_sub = "the rules-only shadow started after the run began"
         elif closed < ratio_min or shadow_closed < ratio_min:
             beats_sub = f"needs {ratio_min} closed trades each"
+            beats_needs = f"{ratio_min} closed trades"
         elif live_avg is None or shadow_avg is None:
             beats_sub = "no R values yet"
         else:
@@ -842,6 +891,10 @@ def evaluate(
                 f"{closed} vs {shadow_closed} trades"
             )
             beats_sub = "the question this run must answer: does the model add value?"
+            beats_detail = {
+                "live_r": float(live_avg),
+                "shadow_r": float(shadow_avg),
+            }
     criteria.append(
         _criterion(
             "beats_rules_only",
@@ -849,6 +902,8 @@ def evaluate(
             status=beats_status,
             sample=beats_sample,
             sub=beats_sub,
+            needs=beats_needs,
+            detail=beats_detail,
         )
     )
 
@@ -928,6 +983,15 @@ def evaluate(
                 if prop_total < PROPOSAL_MIN
                 else "the decision prompt (code-built stop and target options) targets this"
             ),
+            needs=(
+                f"{PROPOSAL_MIN} proposals"
+                if prop_total < PROPOSAL_MIN
+                else None
+            ),
+            detail={
+                "failed": prop_total - prop_pass,
+                "total": prop_total,
+            },
         )
     )
 
@@ -1008,6 +1072,14 @@ def evaluate(
                     else None
                 )
             ),
+            needs=(
+                f"{CALIBRATION_MIN} filled entries"
+                if entries < CALIBRATION_MIN
+                else None
+            ),
+            detail={
+                "gap_pts": float(cal_gap) if cal_gap is not None else None,
+            },
         )
     )
 
@@ -1031,11 +1103,18 @@ def evaluate(
     cycles_pct = Decimal(done) / total * 100 if total else None
     missed = [c for c in cycles if c.status != "done"]
     missed_sub: str | None = None
+    missed_detail: dict[str, Any] = {}
     if missed:
         reasons = Counter(
             (c.errors or ["missed"])[0].removeprefix("error: ") for c in missed
         )
         top_reason = reasons.most_common(1)[0][0]
+        missed_dates = sorted(
+            {
+                _aware(c.scheduled_time).astimezone(NY_TZ).date().isoformat()
+                for c in missed
+            }
+        )
         last_day = _aware(
             max(c.scheduled_time for c in missed)
         ).astimezone(NY_TZ).date()
@@ -1043,6 +1122,12 @@ def evaluate(
             f"{len(missed)} missed: {top_reason} "
             f"({last_day.day} {_MONTHS[last_day.month - 1]})"
         )
+        missed_detail = {
+            "count": len(missed),
+            "dates": missed_dates,
+            "reason": top_reason,
+            "window_sessions": WINDOW_CYCLES,
+        }
     criteria.append(
         _criterion(
             "cycles",
@@ -1059,6 +1144,7 @@ def evaluate(
             ),
             sample=total,
             sub=missed_sub,
+            detail=missed_detail,
         )
     )
 
@@ -1077,6 +1163,14 @@ def evaluate(
         window_start=stops_start,
         as_of=as_of_naive,
     )
+    last_stop_at = session.execute(
+        select(func.max(Event.time)).where(
+            Event.event_type.in_(STOP_MISSING_TYPES),
+            Event.time >= stops_start,
+            Event.time >= run_start,
+            Event.time <= as_of_naive,
+        )
+    ).scalar_one()
     criteria.append(
         _criterion(
             "stops_missing",
@@ -1087,14 +1181,23 @@ def evaluate(
                 PASS if stops_count == 0 and stop_hours == 0 else NOT_YET
             ),
             sample=stops_count + int(bool(stop_hours)),
+            detail={
+                "count": stops_count,
+                "last_date": (
+                    _aware(last_stop_at).astimezone(NY_TZ).date().isoformat()
+                    if last_stop_at is not None
+                    else None
+                ),
+                "window_sessions": WINDOW_STOPS,
+            },
         )
     )
 
     kill_start = _day_start_utc(
         _window_start(calendar, session_date, WINDOW_KILL)
     )
-    kill_count = sum(
-        1
+    kill_events = [
+        e
         for e in session.execute(
             select(Event).where(
                 Event.event_type == "kill_switch",
@@ -1104,13 +1207,26 @@ def evaluate(
             )
         ).scalars()
         if (e.details or {}).get("on") is True
-    )
+    ]
+    kill_count = len(kill_events)
     criteria.append(
         _criterion(
             "kill_switch",
             value=str(kill_count),
             status=PASS if kill_count == 0 else NOT_YET,
             sample=int(kill_count),
+            detail={
+                "count": kill_count,
+                "last_date": (
+                    _aware(max(e.time for e in kill_events))
+                    .astimezone(NY_TZ)
+                    .date()
+                    .isoformat()
+                    if kill_events
+                    else None
+                ),
+                "window_sessions": WINDOW_KILL,
+            },
         )
     )
 
@@ -1177,6 +1293,9 @@ def evaluate(
                 else NOT_YET
             ),
             sample=int(checks_total),
+            detail={
+                "pct": float(price_pct) if price_pct is not None else None,
+            },
         )
     )
 
@@ -1285,27 +1404,60 @@ def _log_criteria(
         return unavailable
     unreviewed = len(unreviewed_fps)
 
-    start20 = _window_start(calendar, session_date, 20).isoformat()
+    start20 = _window_start(
+        calendar, session_date, WINDOW_CRITICAL
+    ).isoformat()
+    names: list[str] = []
+    critical_n = 0
+    critical_last: str | None = None
     with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-        critical_n = int(
-            conn.execute(
-                "SELECT count(*) FROM log_lines WHERE level = 'CRITICAL' "
-                "AND ts >= ?",
-                (start20,),
-            ).fetchone()[0]
-        )
+        critical_n, critical_last = conn.execute(
+            "SELECT count(*), max(ts) FROM log_lines WHERE level = 'CRITICAL' "
+            "AND ts >= ?",
+            (start20,),
+        ).fetchone()
+        critical_n = int(critical_n)
+        # The first two unreviewed problems by sample text, for the
+        # item-100 forward sentence ("the SMTP sign-in, decision call
+        # problems"). Fingerprints group like with like.
+        if unreviewed_fps:
+            marks = ",".join("?" for _ in unreviewed_fps)
+            names = [
+                str(row[0]).split(":")[0].strip()
+                for row in conn.execute(
+                    "SELECT min(substr(message,1,60)) FROM log_lines "  # noqa: S608 - '?' placeholders, values bound
+                    "WHERE fingerprint IN ("
+                    + marks
+                    + ") GROUP BY fingerprint LIMIT 2",
+                    tuple(unreviewed_fps),
+                ).fetchall()
+                if row[0]
+            ]
     return [
         _criterion(
             "log_errors",
             value=str(unreviewed),
             status=PASS if unreviewed == 0 else NOT_YET,
             sample=int(unreviewed),
+            detail={"names": names},
         ),
         _criterion(
             "log_critical",
             value=str(critical_n),
             status=PASS if critical_n == 0 else NOT_YET,
             sample=int(critical_n),
+            detail={
+                "count": critical_n,
+                "last_date": (
+                    _aware(datetime.fromisoformat(critical_last))
+                    .astimezone(NY_TZ)
+                    .date()
+                    .isoformat()
+                    if critical_last
+                    else None
+                ),
+                "window_sessions": WINDOW_CRITICAL,
+            },
         ),
     ]
 
@@ -1456,11 +1608,16 @@ def _manual_state(session: Session) -> list[dict[str, Any]]:
     ]
 
 
-_STATUS_TEXT = {
-    PASS: "passes",
-    NOT_YET: "back to not yet",
-    WAITING: "waiting for data again",
-}
+def _history_word(key: str, status: str) -> str:
+    """Screen words for a stored status change (item 100: History rows
+    use the same words as the criteria)."""
+    if status == PASS:
+        return "passes"
+    if status == WAITING:
+        return "needs data"
+    if key in ("closed_trades", "sessions"):
+        return "building up"
+    return "below target"
 
 
 def _history(session: Session, run: Run | None) -> list[dict[str, Any]]:
@@ -1499,7 +1656,7 @@ def _history(session: Session, run: Run | None) -> list[dict[str, Any]]:
                         "at": _aware(at).isoformat(),
                         "kind": "criterion",
                         "change": (
-                            f"{labels.get(key, key)} {_STATUS_TEXT[status]}"
+                            f"{labels.get(key, key)} {_history_word(key, status)}"
                             + (f" ({value})" if value not in (None, "—") else "")
                         ),
                     }
@@ -1585,11 +1742,14 @@ def payload(
     *,
     config: AppConfig,
     clock: Clock,
+    calendar: CalendarProvider | None = None,
     run: Run | None = None,
     snapshot: ReadinessSnapshot | None = None,
 ) -> dict[str, Any]:
     """The Readiness screen data: latest stored snapshot plus the live
     manual/error state. Never evaluates."""
+    if calendar is None:
+        calendar = WeekdayCalendarProvider()
     if run is None or snapshot is None:
         snapshot, run = latest_snapshot(session)
     criteria = list(snapshot.criteria) if snapshot else []
@@ -1645,8 +1805,25 @@ def payload(
             "manual_done": manual_done,
             "manual_total": len(MANUAL_ITEMS),
             "earliest": earliest,
+            # Item 100: the banner's "expected n sessions into a run".
+            "sessions": next(
+                (
+                    c.get("sample")
+                    for c in criteria
+                    if c.get("key") == "sessions"
+                ),
+                None,
+            ),
+            "min_sessions": int(_cfg(config, "min_sessions", 60)),
         },
         "manual": manual,
+        # Item 100: "What moves this forward", written by code from the
+        # snapshot rows — never a fresh measurement.
+        "forward": build_forward(
+            criteria,
+            calendar=calendar,
+            manual_open=len(MANUAL_ITEMS) - manual_done,
+        ),
         "errors": [
             {
                 "id": e.id,
@@ -1663,6 +1840,18 @@ def payload(
         ],
         "history": _history(session, run),
     }
+
+
+def build_forward(
+    criteria: list[dict[str, Any]],
+    *,
+    calendar: CalendarProvider,
+    manual_open: int,
+) -> dict[str, Any]:
+    """Thin wrapper so tests import the pure function directly."""
+    from app.readiness.forward import forward
+
+    return forward(criteria, calendar=calendar, manual_open=manual_open)
 
 
 def tick(

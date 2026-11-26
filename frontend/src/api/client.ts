@@ -7,6 +7,12 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 export interface ErrorField {
   name: string;
   message: string;
+  /** Item 082: confirm_required fields name the changes that need the
+   * confirmation — key, label and the old → new values. */
+  key?: string;
+  label?: string;
+  old?: string;
+  new?: string;
 }
 
 export class ApiError extends Error {
@@ -54,7 +60,14 @@ async function detailOf(response: Response): Promise<ParsedError> {
         code?: string;
         message?: string;
         error_id?: string;
-        fields?: { name?: string; message?: string }[];
+        fields?: {
+          name?: string;
+          message?: string;
+          key?: string;
+          label?: string;
+          old?: string;
+          new?: string;
+        }[];
       };
     };
     // PR 25 shape: {"error": {"code", "message", "error_id"?, "fields"?}}
@@ -64,7 +77,13 @@ async function detailOf(response: Response): Promise<ParsedError> {
         code: body.error.code ?? null,
         fields: (body.error.fields ?? []).map((f) => ({
           name: f.name ?? '',
-          message: f.message ?? '',
+          message:
+            f.message ??
+            (f.label ? `${f.label}: ${f.old ?? '—'} → ${f.new ?? '—'}` : ''),
+          key: f.key,
+          label: f.label,
+          old: f.old,
+          new: f.new,
         })),
         errorId: body.error.error_id ?? null,
       };
@@ -151,10 +170,22 @@ async function send(
     }
   }
   if (response.status === 403 && !retrying) {
-    const { code } = await detailOf(response.clone());
-    if (code === 'confirm_required') {
+    const parsed = await detailOf(response.clone());
+    if (parsed.code === 'confirm_required') {
       // "Confirm it is you" — then repeat the request once (spec).
-      const ok = await requestConfirmation(actionName(path));
+      // Item 082: the answer's fields name the changes that need it.
+      const changes = parsed.fields
+        .filter((f) => f.key && f.label)
+        .map((f) => ({
+          key: f.key!,
+          label: f.label!,
+          old: f.old ?? '',
+          new: f.new ?? '',
+        }));
+      const ok = await requestConfirmation(
+        actionName(path),
+        changes.length > 0 ? changes : undefined,
+      );
       if (ok) return send(method, path, body, true, signal);
     }
   }
@@ -180,7 +211,7 @@ function actionName(path: string): string {
   if (path === '/api/kill-switch/resume') return 'Resume after the kill switch';
   if (path === '/api/paper-reset') return 'Reset paper account';
   if (path === '/api/runs') return 'Start new run';
-  if (path === '/api/settings') return 'Promote strategy';
+  if (path === '/api/settings') return 'Saving these settings';
   if (path.startsWith('/api/keys/')) return 'Replacing a key';
   return 'This action';
 }

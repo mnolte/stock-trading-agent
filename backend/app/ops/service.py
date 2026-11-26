@@ -30,9 +30,15 @@ from urllib.parse import urlparse
 import httpx
 
 from app.db.backup import dated_backups
+from app.errors import safe_error
 from app.market.clock import NY_TZ
-from app.ops.offsite import OffsiteError, restore_latest
-from app.ops.urls import UrlRejected, validate_public_https_url
+from app.ops.offsite import (
+    OffsiteError,
+    bucket_delete_protection,
+    load_credentials,
+    restore_latest,
+)
+from app.ops.urls import UrlRejected, resolve_public, validate_public_https_url
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -63,6 +69,8 @@ class OpsService:
         secrets: SecretsStore | None = None,
         data_client: ClockSource | None = None,
         pinger: Any = None,
+        resolver: object = None,
+        ping_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._config = config
         self._clock = clock
@@ -70,6 +78,8 @@ class OpsService:
         self._secrets = secrets
         self._data_client = data_client
         self._pinger = pinger or self._http_ping
+        self._resolver = resolver
+        self._ping_transport = ping_transport
         self._status_path = Path(config.env.sa_data_dir) / _STATUS_NAME
         self._status: dict[str, Any] = self._load()
         self.last_heartbeat_at: str | None = self._status.get("heartbeat_at")
@@ -119,22 +129,72 @@ class OpsService:
     # ------------------------------------------------------------------
     # heartbeat
 
-    def heartbeat_url(self) -> str:
-        return str(self._config.get("ops", "heartbeat_url", default="") or "")
+    def heartbeat_url(self) -> str | None:
+        """The dead-man's-switch URL — a write-only secret (item 081).
+
+        ``ops.heartbeat_url`` in config is imported into secrets once at
+        startup and ignored afterwards; nothing else may read it.
+        """
+        if self._secrets is None:
+            return None
+        return self._secrets.get("heartbeat_url")
+
+    def heartbeat_masked(self) -> str | None:
+        """The only form of the URL the API may show: host, mask, last 4."""
+        url = self.heartbeat_url()
+        if not url:
+            return None
+        host = urlparse(url).netloc or urlparse(url).path
+        return f"{host}/••••{url[-4:]}"
 
     def validate_heartbeat_url(self, url: str, resolver: object = None) -> str:
         """https + public — the rule from Stored credentials."""
         try:
             return validate_public_https_url(url, resolver=resolver)
         except UrlRejected as exc:
-            raise ValueError(f"heartbeat_url {exc}") from exc
+            raise ValueError(f"heartbeat_url {safe_error(exc)}") from exc
+
+    @staticmethod
+    def _ping_request(url: str, address: str) -> tuple[str, dict[str, str], dict[str, str]]:
+        """The request for one checked address: connect to ``address``
+        while the Host header and the TLS SNI keep the original name —
+        the lookup that was checked is the lookup that is used (item
+        085)."""
+        parsed = urlparse(url)
+        port = parsed.port or 443
+        ip_host = f"[{address}]" if ":" in address else address
+        target = f"https://{ip_host}:{port}{parsed.path or '/'}"
+        if parsed.query:
+            target += f"?{parsed.query}"
+        host = parsed.hostname or ""
+        host_header = host if port == 443 else f"{host}:{port}"
+        return target, {"Host": host_header}, {"sni_hostname": host}
 
     async def _http_ping(self, url: str) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(url)
+            parsed = urlparse(url)
+            if parsed.scheme != "https" or not parsed.hostname:
+                return False
+            addresses = resolve_public(
+                parsed.hostname, resolver=self._resolver
+            )
+        except (UrlRejected, ValueError):
+            logger.warning("heartbeat ping refused: address check failed")
+            return False
+        try:
+            target, headers, extensions = self._ping_request(url, addresses[0])
+        except ValueError:
+            logger.warning("heartbeat ping refused: bad URL")
+            return False
+        try:
+            async with httpx.AsyncClient(
+                timeout=10, transport=self._ping_transport
+            ) as client:
+                response = await client.get(
+                    target, headers=headers, extensions=extensions
+                )
             # 4xx is a miss too — a wrong URL returning 404 must not
-            # read as a live heartbeat.
+            # read as a live heartbeat. Redirects are not followed.
             return response.status_code < 400
         except httpx.HTTPError:
             return False
@@ -407,7 +467,7 @@ class OpsService:
                 logger.exception("offsite backup failed")
             self._set(
                 "offsite_backup",
-                {"at": self._clock.now().isoformat(), "ok": False, "error": str(exc)[:200]},
+                {"at": self._clock.now().isoformat(), "ok": False, "error": safe_error(exc)},
             )
             raise  # the caller records the backup_failed event + alert
         self._set(
@@ -418,7 +478,7 @@ class OpsService:
         try:
             await asyncio.to_thread(self.run_offsite_backup_sync)
         except Exception as exc:  # noqa: BLE001
-            self._notify("backup_failed", f"offsite backup failed ({exc})")
+            self._notify("backup_failed", f"offsite backup failed ({safe_error(exc)})")
 
     async def run_restore_test(self) -> bool:
         """Monthly: restore the newest offsite snapshot into a temp folder
@@ -432,6 +492,21 @@ class OpsService:
         import sqlite3
         import tempfile
 
+        # Item 084: ask the bucket whether versioning protects the
+        # backups (one signed request) — stored with the result, shown
+        # as "Delete protection" in Settings → Server. Never blocks.
+        delete_protection = "unknown"
+        try:
+            creds = load_credentials(self._secrets)
+            delete_protection = await asyncio.to_thread(
+                bucket_delete_protection, creds, self._clock.now()
+            )
+        except OffsiteError:
+            # Unreadable credentials — the restore reports that itself.
+            logger.debug("delete-protection check skipped: no usable credentials")
+        except Exception:  # noqa: BLE001 — the check must never block a restore
+            logger.warning("delete-protection check failed", exc_info=True)
+
         target_root: Path | None = None
         try:
             target_root = Path(tempfile.mkdtemp(prefix="sa-restore-test-"))
@@ -443,7 +518,11 @@ class OpsService:
             ok = integrity == "ok"
             self._set(
                 "restore_test",
-                {"at": self._clock.now().isoformat(), "ok": ok},
+                {
+                    "at": self._clock.now().isoformat(),
+                    "ok": ok,
+                    "delete_protection": delete_protection,
+                },
             )
             if not ok:
                 self._notify("backup_failed", "restore test failed integrity_check")
@@ -457,10 +536,15 @@ class OpsService:
                 logger.warning("monthly restore test failed: %s", exc)
             else:
                 logger.exception("restore test failed")
-            self._notify("backup_failed", f"restore test failed ({exc})")
+            self._notify("backup_failed", f"restore test failed ({safe_error(exc)})")
             self._set(
                 "restore_test",
-                {"at": self._clock.now().isoformat(), "ok": False, "error": str(exc)[:200]},
+                {
+                    "at": self._clock.now().isoformat(),
+                    "ok": False,
+                    "error": safe_error(exc),
+                    "delete_protection": delete_protection,
+                },
             )
             return False
         finally:

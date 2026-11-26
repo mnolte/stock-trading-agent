@@ -17,12 +17,20 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
   - PR title `[NNN] type: Title`;
   - commits start with `[NNN]`;
   - screenshots in `docs/screenshots/NNN/`.
-  Take the number and name from the kickoff's file name. When you open or merge the PR, update the item's row in `docs/work-items.md` (build PR and status).
-  - If the item has a GitHub issue (its row in `docs/work-items.md` and its kickoff name it), write `Closes #<issue>` in the PR description, so GitHub closes the issue when the PR is merged. For an item built in several PRs, write `Part of #<issue>` in the earlier ones and `Closes #<issue>` in the last.
+  Take the number and name from the kickoff's file name. An item without a kickoff claims its number by opening its issue `[NNN] Title` first (`docs/work-items.md` → NNN).
+  - **One file per work item** (decided 15 Nov, item 102). From item 102 on, update the item's file `docs/changes/NNN-type-slug.md`, never `docs/CHANGES.md` or the register table in `docs/work-items.md`: add your PR to `build_prs`, set `status` (`building` while more PRs follow, `merged` in the PR that completes the item), and add a dated section `## YYYY-MM-DD · build PR #n` when the PR changes behaviour, config or prompts. Format: `docs/changes/README.md`. For items up to 101 keep updating their row and `docs/CHANGES.md` as before.
+  - If the item has a GitHub issue (its file or row and its kickoff name it), write `Closes #<issue>` in the PR description, so GitHub closes the issue when the PR is merged. For an item built in several PRs, write `Part of #<issue>` in the earlier ones and `Closes #<issue>` in the last.
+  - **A PR closes only issues it resolves** (decided 12 Nov, item 089). Before you mark a PR ready, for every issue it would close:
+    1. Read the whole issue, comments included, not only its title or the kickoff.
+    2. List every thing it asks for. Check each against what is on `main` plus this PR: the file and line, or the test that proves it.
+    3. Write the result in the PR under "Issues closed": one line per issue with the points and where each is met.
+    4. If a point is not done: do it, or change the line to `Part of #<issue>` and comment on the issue what is left. Never close an issue with an open point, and never drop a point silently.
+  - GitHub closes on `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved` before `#n`, in the PR description and in commit messages. Write those words before an issue number only when you mean it; otherwise write `Refs #n` or `Part of #n`.
+  - After the merge the issue must show as closed. If it stayed open (for example a typo in the keyword), close it with a comment naming the PR.
   - In the build PR itself, move the kickoff unchanged to `docs/kickoffs/archive/` with `git mv`, in the same PR as the code. For an item built in several PRs, the first PR moves it and the later ones read it from `archive/`. An unchanged move needs no `spec change` label; don't edit the file in the same move.
 - **Ask instead of guessing.** If the spec is unclear, incomplete or contradicts itself on anything that changes behaviour, stop and ask in the PR. Don't invent a rule.
 - Every rule and gate gets a test for the pass case and the fail case.
-- Every behaviour change updates `docs/SPEC.md` (only when asked to) and adds an entry to `docs/CHANGES.md`.
+- Every behaviour change updates `docs/SPEC.md` (only when asked to) and adds a section to the item's file in `docs/changes/` (`docs/CHANGES.md` for items up to 101).
 - If your PR touches a file listed in `.github/spec-paths.txt`, add the label `spec change` and say in the PR which spec files changed and why. Never commit spec or design files that belong to another PR.
 - End every PR with: what was built, what was tested, what was not tested, deviations from the spec, design differences.
 
@@ -36,9 +44,12 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
 uv run ruff check <changed files>                      # not the whole tree
 cd backend && uv run pytest tests/test_<area>.py -k <name>   # the tests for your change, no -n auto
 cd frontend && pnpm exec vitest run <changed test file>
+cd backend && uv run pytest tests/test_<area>.py \
+  --cov=app.<module> --cov-config=../pyproject.toml \
+  --cov-report=term-missing        # coverage for one module
 ```
 
-- **Never run locally:** `make test`, `make test-backend`, `make test-perf`, `make test-slow`, `make test-e2e`, the Playwright suite, `make security`, or a Docker image build. CI runs all of them on every push to a pull request (`.github/workflows/ci.yml`, `image.yml`).
+- **Never run locally:** `make test`, `make test-backend`, `make test-perf`, `make test-slow`, `make test-e2e`, the Playwright suite (with or without `E2E_COVERAGE=1`), `make security`, a full coverage run, or a Docker image build. CI runs all of them on every push to a pull request (`.github/workflows/ci.yml`, `image.yml`).
 - **Push early, as a draft PR.** Open the pull request as a draft once the first commit builds, so CI starts working while you continue. Push in batches, not after every small commit: a new push cancels the run before it.
 - **CI is the proof.** A step is done when its CI checks are green, not when a local run passed. Wait for the running checks; if one fails, read its log (`gh run view --log-failed`), fix it on the branch and push. Re-run locally only the one failing test.
 - **Exceptions**, said in the PR under "Test plan": CI hasn't started a run for 30 minutes (then run the affected test files, not the suite); a failure that only shows locally; screenshots for a UI PR, which need the app in simulated mode. Stop every process you started when you're done (by its PID, hard rule 12): a forgotten Vite server or watcher costs CPU all day.

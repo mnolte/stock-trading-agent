@@ -9,6 +9,7 @@ from decimal import Decimal
 import httpx
 
 from app.data.models import DataResult, FXRate
+from app.errors import safe_error
 from app.market.clock import Clock, RealClock
 
 
@@ -64,4 +65,4 @@ class EcbFXSource:
                 source="ecb",
             )
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="ecb")
+            return DataResult(data=None, error=safe_error(exc), source="ecb")

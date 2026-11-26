@@ -9,6 +9,17 @@ import type { ChipVariant } from '../components/Chip';
 
 const DISPLAY_TZ = 'Europe/Amsterdam';
 
+/** "weekly.v3" → 3; pre-story versions and unknown shapes → 0. */
+export function promptVersionNumber(version: string | null | undefined): number {
+  const m = /\.v(\d+)$/.exec(version ?? '');
+  return m ? Number(m[1]) : 0;
+}
+
+/** v3+ review prompts write the one-to-three-paragraph story (item 079). */
+export function isStoryVersion(version: string | null | undefined): boolean {
+  return promptVersionNumber(version) >= 3;
+}
+
 /** "+1.49%" / "−0.49%" — signed percent, null → "—". */
 export function signedPct(
   value: number | null | undefined,
@@ -133,6 +144,9 @@ export function metaLine(review: ReviewListItem | ReviewDetail): string {
   if (review.prompt_version) parts.push(review.prompt_version);
   if (review.source === 'model') parts.push('numbers checked ✓');
   else parts.push(`Plain review: ${review.reason}`);
+  if (isStoryVersion(review.prompt_version)) {
+    parts.push('underlined words explained on hover');
+  }
   return parts.join(' · ');
 }
 
